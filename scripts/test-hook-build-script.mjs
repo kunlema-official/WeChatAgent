@@ -19,6 +19,13 @@ test('Hook build resolves a renamed initialization source by the HTTP startup an
   assert.doesNotMatch(buildScript, /Replace-Checked \(Join-Path \$build 'src\\inline_weixin_dll_load\.cpp'\)/);
 });
 
+test('Hook build safely handles multiple HTTP startup branches and restricts all to loopback', () => {
+  assert.match(buildScript, /\$startMatches\.Count -lt 1/);
+  assert.doesNotMatch(buildScript, /\$startMatches\.Count -ne 1/);
+  assert.match(buildScript, /\[regex\]::Replace\(\$inlineText, \$startPattern, 'g_httpServer->Start\("127\.0\.0\.1", g_StartPort\);'\)/);
+  assert.match(buildScript, /Restricted .*HTTP server start call\(s\) to 127\.0\.0\.1/);
+});
+
 test('Hook build preserves the upstream voice route before replacing the route registrar', () => {
   assert.match(buildScript, /Copy-Item -LiteralPath \(Join-Path \$build 'src\\http_routes\.cpp'\) -Destination \$voiceRouteCopy/);
   assert.match(buildScript, /RegisterUpstreamRoutes/);

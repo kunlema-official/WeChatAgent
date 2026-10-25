@@ -84,8 +84,11 @@ $inlineLoadBuildFile = Join-Path $build $inlineLoadRelative
 $inlineText = [IO.File]::ReadAllText($inlineLoadBuildFile)
 $startPattern = 'g_httpServer\s*->\s*Start\s*\(\s*"[^"]+"\s*,\s*g_StartPort\s*\)\s*;'
 $startMatches = [regex]::Matches($inlineText, $startPattern)
-if ($startMatches.Count -ne 1) { throw ('Expected exactly one HTTP server start call in ' + $inlineLoadRelative + '; found ' + $startMatches.Count) }
-$inlineText = [regex]::Replace($inlineText, $startPattern, 'g_httpServer->Start("127.0.0.1", g_StartPort);', 1)
+if ($startMatches.Count -lt 1) { throw ('No HTTP server start calls found in ' + $inlineLoadRelative + '; expected at least one matching g_httpServer->Start(..., g_StartPort) call.') }
+# Some reviewed Hook revisions contain multiple startup branches in this translation unit.
+# Restrict every matching server start to loopback, not just the first one.
+$inlineText = [regex]::Replace($inlineText, $startPattern, 'g_httpServer->Start("127.0.0.1", g_StartPort);')
+Write-Output ('Restricted ' + $startMatches.Count + ' HTTP server start call(s) to 127.0.0.1.')
 [IO.File]::WriteAllText($inlineLoadBuildFile, $inlineText, $encoding)
 Replace-Checked $inlineLoadBuildFile '#include "global.h"' "#include `"global.h`"`n#include `"deferred_init.h`""
 Replace-Checked $inlineLoadBuildFile '    Patch_Revoke();' '    // WeChatAgent does not change message recall behavior.'
