@@ -6,7 +6,7 @@ $venv = Join-Path $root 'state\voice-runtime'
 New-Item -ItemType Directory -Force -Path $stateVoice | Out-Null
 
 function Get-PythonInfo([string]$Executable, [string[]]$Prefix = @()) {
-  $pythonArgs = @($Prefix) + @('-c', 'import struct,sys; print("%d.%d %d" % (sys.version_info.major, sys.version_info.minor, struct.calcsize("P")*8))')
+  $pythonArgs = @($Prefix) + @('-c', 'import struct,sys; print(str(sys.version_info.major)+chr(46)+str(sys.version_info.minor),struct.calcsize(chr(80))*8)')
   $value = & $Executable @pythonArgs
   if ($LASTEXITCODE -ne 0) { throw 'Unable to execute the selected Python.' }
   return ([string]$value).Trim()
@@ -24,7 +24,7 @@ if (-not $PythonPath -and (Test-Path -LiteralPath $distributionFile)) {
     if (Test-Path -LiteralPath $bundledPython) {
       $info = Get-PythonInfo $bundledPython
       if ($info -ne '3.11 64') { throw ('Bundled voice Python must be 3.11 x64; found ' + $info) }
-      & $bundledPython -B -c 'import pilk, edge_tts, imageio_ffmpeg; print("voice-dependencies-ok")'
+      & $bundledPython -B -c 'import pilk,edge_tts,imageio_ffmpeg; print(1)'
       if ($LASTEXITCODE -ne 0) { throw 'Bundled voice runtime failed its dependency self-check.' }
       $record = @{ version = 1; pythonPath = $bundledPython; pythonVersion = '3.11'; mode = 'bundled'; installedAt = (Get-Date).ToUniversalTime().ToString('o') }
       $temp = Join-Path $stateVoice 'python.json.tmp'
@@ -54,7 +54,7 @@ $python = Join-Path $venv 'Scripts\python.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Failed to prepare pip for the voice environment.' }
 & $python -m pip install --only-binary=:all: -r (Join-Path $PSScriptRoot 'voice-requirements.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Voice dependencies failed to install. Existing WeChatAgent and reader Python environments were not modified.' }
-& $python -c 'import pilk, edge_tts, imageio_ffmpeg; print("voice-dependencies-ok")'
+& $python -c 'import pilk,edge_tts,imageio_ffmpeg; print(1)'
 if ($LASTEXITCODE -ne 0) { throw 'Voice dependency self-check failed.' }
 $record = @{ version = 1; pythonPath = $python; pythonVersion = '3.11'; installedAt = (Get-Date).ToUniversalTime().ToString('o') }
 $temp = Join-Path $stateVoice 'python.json.tmp'
