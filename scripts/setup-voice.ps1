@@ -5,6 +5,13 @@ $stateVoice = Join-Path $root 'state\voice'
 $venv = Join-Path $root 'state\voice-runtime'
 New-Item -ItemType Directory -Force -Path $stateVoice | Out-Null
 
+function Get-PythonInfo([string]$Executable, [string[]]$Prefix = @()) {
+  $pythonArgs = @($Prefix) + @('-c', 'import struct,sys; print("%d.%d %d" % (sys.version_info.major, sys.version_info.minor, struct.calcsize("P")*8))')
+  $value = & $Executable @pythonArgs
+  if ($LASTEXITCODE -ne 0) { throw 'Unable to execute the selected Python.' }
+  return ([string]$value).Trim()
+}
+
 # Installed preview builds ship a portable Python 3.11 runtime so users do not
 # need to install Python or any development components on Windows.
 $distributionFile = Join-Path $root 'config\distribution.json'
@@ -27,13 +34,6 @@ if (-not $PythonPath -and (Test-Path -LiteralPath $distributionFile)) {
       exit 0
     }
   }
-}
-
-function Get-PythonInfo([string]$Executable, [string[]]$Prefix = @()) {
-  $pythonArgs = @($Prefix) + @('-c', 'import struct,sys; print("%d.%d %d" % (sys.version_info.major, sys.version_info.minor, struct.calcsize("P")*8))')
-  $value = & $Executable @pythonArgs
-  if ($LASTEXITCODE -ne 0) { throw 'Unable to execute the selected Python.' }
-  return ([string]$value).Trim()
 }
 
 if ($PythonPath) {
