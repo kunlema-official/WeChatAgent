@@ -34,7 +34,7 @@ if (-not (Test-Path -LiteralPath $embeddedPython) -or -not (Test-Path -LiteralPa
 $site = Join-Path $runtime 'Lib\site-packages'
 New-Item -ItemType Directory -Force -Path $site | Out-Null
 $buildPython = (Get-Command python -ErrorAction Stop).Source
-$buildPythonInfo = (& $buildPython -c 'import struct,sys; print("%d.%d %d" % (sys.version_info.major,sys.version_info.minor,struct.calcsize("P")*8))').Trim()
+$buildPythonInfo = (& $buildPython -c 'import struct,sys; print(str(sys.version_info.major)+chr(46)+str(sys.version_info.minor),struct.calcsize(chr(80))*8)').Trim()
 if ($LASTEXITCODE -ne 0 -or $buildPythonInfo -ne '3.11 64') {
   throw ('The build runner must provide Python 3.11 x64; found ' + $buildPythonInfo)
 }
@@ -43,8 +43,8 @@ if ($LASTEXITCODE -ne 0 -or $buildPythonInfo -ne '3.11 64') {
 if ($LASTEXITCODE -ne 0) { throw 'Unable to install the locked voice runtime wheels into the portable Python directory.' }
 
 @('python311.zip', '.', 'Lib\site-packages', 'import site') | Set-Content -LiteralPath $pthFile -Encoding ASCII
-$probe = & $embeddedPython -B -c 'import sys,struct,pilk,edge_tts,imageio_ffmpeg; print("VOICE_RUNTIME_OK",sys.version.split()[0],struct.calcsize("P")*8)'
-if ($LASTEXITCODE -ne 0 -or ($probe -join ' ') -notmatch 'VOICE_RUNTIME_OK 3\.11\.9 64') {
+$probe = & $embeddedPython -B -c 'import sys,struct,pilk,edge_tts,imageio_ffmpeg; print(sys.version_info.major,sys.version_info.minor,sys.version_info.micro,struct.calcsize(chr(80))*8)'
+if ($LASTEXITCODE -ne 0 -or ($probe -join ' ') -notmatch '3 11 9 64') {
   throw ('Portable voice Python failed its import probe: ' + ($probe -join ' '))
 }
 
