@@ -26,6 +26,8 @@ test('installer packages portable Python 3.11 and runtime bootstrap copies it', 
   assert.match(build, /voicePython:'3\.11\.9'/);
   assert.match(deployment, /voiceRuntimeSource/);
   assert.match(deployment, /voice-python/);
+  assert.match(deployment, /mode: 'bundled'/);
+  assert.match(deployment, /state', 'voice', 'python\.json'/);
   assert.match(setup, /voice-python\\python\.exe/);
   assert.match(setup, /mode = 'bundled'/);
   assert.match(prepare, /33b448f95fecb7c6f802157dbd5e6b40a2ad9bfc8b95ca634a06ba4073ad1ac0/);
