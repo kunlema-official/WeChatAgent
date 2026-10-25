@@ -51,6 +51,20 @@ async function bootstrapDeployment(resourcesPath, dataHome, progress = () => {},
   }
   const python = path.join(versionRuntime, 'python', 'python.exe');
   const node = path.join(versionRuntime, 'node.exe');
+  const voicePython = path.join(versionRuntime, 'voice-python', 'python.exe');
+  if (fs.existsSync(voicePython)) {
+    const voiceStateDir = path.join(workspace, 'state', 'voice');
+    const voiceStateFile = path.join(voiceStateDir, 'python.json');
+    let previousVoice = null;
+    try { previousVoice = JSON.parse(fs.readFileSync(voiceStateFile, 'utf8').replace(/^\uFEFF/, '')); } catch {}
+    if (!previousVoice?.pythonPath || previousVoice.mode === 'bundled' || !fs.existsSync(previousVoice.pythonPath)) {
+      fs.mkdirSync(voiceStateDir, { recursive: true });
+      fs.writeFileSync(voiceStateFile, JSON.stringify({
+        version: 1, pythonPath: voicePython, pythonVersion: '3.11', mode: 'bundled',
+        installedAt: new Date().toISOString()
+      }, null, 2) + '\n');
+    }
+  }
   // Keep an existing legacy executable/data binding; new installations choose
   // an independently installed DSH through the setup page.
   const dsh = dshBundled ? path.join(versionRuntime,'dsh','DeepSeek Harness.exe') : previousSettings.dsh || '';
