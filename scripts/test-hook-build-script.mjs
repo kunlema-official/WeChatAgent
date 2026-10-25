@@ -37,3 +37,8 @@ test('GitHub Actions uses Node 24-compatible action releases', () => {
   assert.match(workflow, /actions\/checkout\@v5/);
   assert.match(workflow, /actions\/setup-node\@v5/);
 });
+
+test('Hook build disables the pinned upstream revoke call site', () => {
+  assert.match(buildScript, /Replace-Checked \\$inlineLoadBuildFile 'if \\(g_WxVersion == 0\\) Patch_Revoke\\(\\);'/);
+  assert.doesNotMatch(buildScript, /Replace-Checked \\$inlineLoadBuildFile '    Patch_Revoke\\(\\);'/);
+});
