@@ -11,12 +11,20 @@ foreach ($taskOverride in @(@{value=$BuildDirectory;name='build'},@{value=$Outpu
     if ($taskOverride.name -eq 'build') { $build=$taskPath } else { $output=$taskPath }
 }
 $repo = 'https://github.com/mengyunqwq/wechat-hook.git'
+$pinnedCommit = 'e3f6cfc45701c5233d87024813ea8842aa7bfb4b' # source revision observed in the Windows build log
 if (-not (Test-Path -LiteralPath (Join-Path $source 'x64_Version_dll.vcxproj'))) {
     if (Test-Path -LiteralPath $source) { throw 'components/WeChat-Hook exists but is not a complete source checkout. Back it up, move it aside, and rerun hook:build.' }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $source) | Out-Null
-    Write-Output ('Cloning voice-capable Hook source: ' + $repo)
-    & git clone --branch main --depth 1 $repo $source
-    if ($LASTEXITCODE -ne 0) { throw 'Unable to clone the voice-capable Hook source. Check network access and GitHub availability.' }
+    Write-Output ('Fetching pinned voice-capable Hook source: ' + $repo + ' @ ' + $pinnedCommit)
+    New-Item -ItemType Directory -Force -Path $source | Out-Null
+    & git init $source
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to initialize Hook source checkout.' }
+    & git -C $source remote add origin $repo
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to configure Hook source origin.' }
+    & git -C $source fetch --depth 1 origin $pinnedCommit
+    if ($LASTEXITCODE -ne 0) { throw ('Unable to fetch pinned Hook commit ' + $pinnedCommit + '. Check GitHub access or update the reviewed commit deliberately.') }
+    & git -C $source checkout --detach FETCH_HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to check out reviewed Hook source.' }
 }
 if (-not (Test-Path -LiteralPath (Join-Path $source 'x64_Version_dll.vcxproj'))) { throw 'Hook source is incomplete: x64_Version_dll.vcxproj is missing.' }
 $commit = ''
@@ -34,13 +42,31 @@ if (Test-Path -LiteralPath (Join-Path $source '.git')) {
     }
     $commit = $provenance.commit
 } else { throw 'Hook source must be a Git checkout or have verified UPSTREAM.json provenance.' }
-$voiceSource = Get-ChildItem -LiteralPath (Join-Path $source 'src') -Recurse -Filter '*.cpp' | Select-String -Pattern '\bRoute_SendVoiceMsg\s*\(' | Select-Object -First 1
-if (-not $voiceSource) { throw 'This Hook source does not implement Route_SendVoiceMsg. Use https://github.com/mengyunqwq/wechat-hook, not the stock aixed upstream.' }
+if ($commit -and $commit -ne $pinnedCommit) { throw ('Hook source commit mismatch. This build integration is pinned for ' + $pinnedCommit + ' but found ' + $commit + '. Remove components/WeChat-Hook and rerun hook:build to fetch the pinned revision.') }
+$voiceSource = Get-ChildItem -LiteralPath (Join-Path $source 'src') -Recurse -Filter '*.cpp' | Select-String -Pattern '(?m)^\s*(?:void|bool|int)\s+Route_SendVoiceMsg\s*\(' | Select-Object -First 1
+if (-not $voiceSource) { throw 'This Hook source does not define Route_SendVoiceMsg. Use the reviewed voice-capable source revision, not the stock aixed upstream.' }
 $voiceSourcePath = $voiceSource.Path
 $projectText = [IO.File]::ReadAllText((Join-Path $source 'x64_Version_dll.vcxproj'))
 $projectRelative = $voiceSourcePath.Substring($source.Length + 1).Replace('/', '\')
 if (-not $projectText.Contains($projectRelative)) { throw ('Voice route source is not included in x64_Version_dll.vcxproj: ' + $projectRelative) }
-Write-Output ('Voice route source: ' + $projectRelative)
+$voiceSourceRelative = $projectRelative
+# The upstream moved its initialization translation unit in the current reviewed revision.
+# Locate it by its unique HTTP-server startup anchor instead of assuming the old filename.
+$inlineLoadRelative = 'src\inline_weixin_dll_load.cpp'
+if (-not (Test-Path -LiteralPath (Join-Path $source $inlineLoadRelative))) {
+    $startupCandidates = @()
+    foreach ($candidate in (Get-ChildItem -LiteralPath $source -Recurse -File -Filter '*.cpp')) {
+        $candidateText = [IO.File]::ReadAllText($candidate.FullName)
+        if ($candidateText -match 'g_httpServer\s*->\s*Start\s*\(' -and $candidateText.Contains('g_StartPort')) { $startupCandidates += $candidate }
+    }
+    if ($startupCandidates.Count -ne 1) {
+        $found = ($startupCandidates | ForEach-Object { $_.FullName }) -join '; '
+        throw ('Cannot safely locate the Hook initialization source by the HTTP server startup anchor. Candidates: ' + $found)
+    }
+    $inlineLoadRelative = [IO.Path]::GetRelativePath($source, $startupCandidates[0].FullName).Replace('/', '\')
+    Write-Output ('Resolved moved initialization source: ' + $inlineLoadRelative)
+}
+Write-Output ('Voice route source: ' + $voiceSourceRelative)
 Write-Output ('Hook commit: ' + $commit)
 New-Item -ItemType Directory -Path $build,$output -Force | Out-Null
 foreach ($entry in Get-ChildItem -LiteralPath $source -Force) {
@@ -49,13 +75,20 @@ foreach ($entry in Get-ChildItem -LiteralPath $source -Force) {
 }
 $encoding = [Text.UTF8Encoding]::new($false)
 function Replace-Checked([string]$File,[string]$Before,[string]$After) {
+    if (-not (Test-Path -LiteralPath $File)) { throw ('Expected upstream source file missing: ' + $File) }
     $text = [IO.File]::ReadAllText($File)
-    if (-not $text.Contains($Before)) { throw ('Expected upstream code missing: ' + $File) }
+    if (-not $text.Contains($Before)) { throw ('Expected upstream code missing: ' + $File + ' :: ' + $Before) }
     [IO.File]::WriteAllText($File,$text.Replace($Before,$After),$encoding)
 }
-Replace-Checked (Join-Path $build 'src\inline_weixin_dll_load.cpp') 'g_httpServer->Start("0.0.0.0", g_StartPort);' 'g_httpServer->Start("127.0.0.1", g_StartPort);'
-Replace-Checked (Join-Path $build 'src\inline_weixin_dll_load.cpp') '#include "global.h"' "#include `"global.h`"`n#include `"deferred_init.h`""
-Replace-Checked (Join-Path $build 'src\inline_weixin_dll_load.cpp') '    Patch_Revoke();' '    // WeChatAgent does not change message recall behavior.'
+$inlineLoadBuildFile = Join-Path $build $inlineLoadRelative
+$inlineText = [IO.File]::ReadAllText($inlineLoadBuildFile)
+$startPattern = 'g_httpServer\s*->\s*Start\s*\(\s*"[^"]+"\s*,\s*g_StartPort\s*\)\s*;'
+$startMatches = [regex]::Matches($inlineText, $startPattern)
+if ($startMatches.Count -ne 1) { throw ('Expected exactly one HTTP server start call in ' + $inlineLoadRelative + '; found ' + $startMatches.Count) }
+$inlineText = [regex]::Replace($inlineText, $startPattern, 'g_httpServer->Start("127.0.0.1", g_StartPort);', 1)
+[IO.File]::WriteAllText($inlineLoadBuildFile, $inlineText, $encoding)
+Replace-Checked $inlineLoadBuildFile '#include "global.h"' "#include `"global.h`"`n#include `"deferred_init.h`""
+Replace-Checked $inlineLoadBuildFile '    Patch_Revoke();' '    // WeChatAgent does not change message recall behavior.'
 Replace-Checked (Join-Path $build 'dllmain.cpp') 'HideModuleFromPEB(hModule);' '// WeChatAgent keeps the module visible for diagnostics.'
 Replace-Checked (Join-Path $build 'dllmain.cpp') '#include "global.h"' "#include `"global.h`"`n#include `"deferred_init.h`""
 Replace-Checked (Join-Path $build 'dllmain.cpp') 'CustomInit(hModule);' 'ScheduleWeChatAgentInit(hModule);'
@@ -64,8 +97,23 @@ Replace-Checked (Join-Path $build 'src\version_proxy.cpp') '#include "version_pr
 Replace-Checked (Join-Path $build 'src\version_proxy.cpp') '    g_hWeixinExe = GetModuleHandleW(L"weixin.exe");' "    WeChatAgentInitStage(`"module_lookup`");`n    g_hWeixinExe = GetModuleHandleW(L`"weixin.exe`");"
 Replace-Checked (Join-Path $build 'src\version_proxy.cpp') '    if (MH_Initialize() != MH_OK)' "    WeChatAgentInitStage(`"minhook_initialize`");`n    const auto minhookStatus = MH_Initialize();`n    WeChatAgentInitLog(`"minhook_status`", static_cast<unsigned long>(minhookStatus));`n    if (minhookStatus != MH_OK && minhookStatus != MH_ERROR_ALREADY_INITIALIZED)"
 Replace-Checked (Join-Path $build 'src\version_proxy.cpp') '    Evt_WeixinLoad();' "    WeChatAgentInitStage(`"weixin_load_enter`");`n    Evt_WeixinLoad();`n    WeChatAgentInitStage(`"weixin_load_returned`");"
-Replace-Checked (Join-Path $build 'src\inline_weixin_dll_load.cpp') 'GetParentProcessId();' "GetParentProcessId();`n    WeChatAgentInitStage(`"parent_pid_ready`");"
-Replace-Checked (Join-Path $build 'src\inline_weixin_dll_load.cpp') '        g_httpServer = new HttpServer();' "        WeChatAgentInitStage(`"http_wrapper_construct`");`n        g_httpServer = new HttpServer();"
+Replace-Checked $inlineLoadBuildFile 'GetParentProcessId();' "GetParentProcessId();`n    WeChatAgentInitStage(`"parent_pid_ready`");"
+Replace-Checked $inlineLoadBuildFile '        g_httpServer = new HttpServer();' "        WeChatAgentInitStage(`"http_wrapper_construct`");`n        g_httpServer = new HttpServer();"
+$voiceRouteCompileEntry = ''
+if ($voiceSourceRelative -ieq 'src\http_routes.cpp') {
+    # The reviewed fork defines Route_SendVoiceMsg in http_routes.cpp. Keep that implementation
+    # in a separate translation unit before replacing the registrar; otherwise the route is lost.
+    $voiceRouteCopy = Join-Path $build 'src\voice_send_route.cpp'
+    Copy-Item -LiteralPath (Join-Path $build 'src\http_routes.cpp') -Destination $voiceRouteCopy -Force
+    $voiceRouteText = [IO.File]::ReadAllText($voiceRouteCopy)
+    $registerPattern = '(?m)^(\s*(?:static\s+)?void\s+)RegisterRoutes\s*\('
+    if (-not [regex]::IsMatch($voiceRouteText, $registerPattern)) { throw 'Voice route implementation is in src/http_routes.cpp but its RegisterRoutes function could not be isolated safely.' }
+    $voiceRouteText = [regex]::Replace($voiceRouteText, $registerPattern, '$1RegisterUpstreamRoutes(', 1)
+    if (-not $voiceRouteText.Contains('Route_SendVoiceMsg')) { throw 'Preserved voice route source lost Route_SendVoiceMsg.' }
+    [IO.File]::WriteAllText($voiceRouteCopy, $voiceRouteText, $encoding)
+    $voiceRouteCompileEntry = '<ClCompile Include="src\http_routes.cpp" /><ClCompile Include="src\voice_send_route.cpp" />'
+    Write-Output 'Preserved Route_SendVoiceMsg in src\voice_send_route.cpp; upstream route registration remains uncalled.'
+}
 [IO.File]::WriteAllText((Join-Path $build 'src\http_routes.cpp'),"#include `"http_routes.h`"`n#include `"wechatagent_hook.h`"`nvoid RegisterRoutes(httplib::Server& server) { RegisterWeChatAgentRoutes(server); }`n",$encoding)
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native-hook\wechatagent_hook.h') -Destination (Join-Path $build 'include') -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native-hook\wechatagent_hook.cpp') -Destination (Join-Path $build 'src') -Force
@@ -75,7 +123,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'native-hook\sticker_trace.cpp')
 foreach ($name in @('file_sender.h','deferred_init.h','http_server.h')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('native-hook\'+$name)) -Destination (Join-Path $build 'include') -Force }
 foreach ($name in @('file_sender.cpp','deferred_init.cpp','http_server.cpp')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('native-hook\'+$name)) -Destination (Join-Path $build 'src') -Force }
 $project = Join-Path $build 'x64_Version_dll.vcxproj'
-Replace-Checked $project '<ClCompile Include="src\http_routes.cpp" />' '<ClCompile Include="src\http_routes.cpp" /><ClCompile Include="src\wechatagent_hook.cpp" /><ClCompile Include="src\sticker_sender.cpp" /><ClCompile Include="src\sticker_trace.cpp" /><ClCompile Include="src\file_sender.cpp" /><ClCompile Include="src\deferred_init.cpp" />'
+$routeCompilePrefix = if ($voiceRouteCompileEntry) { $voiceRouteCompileEntry } else { '<ClCompile Include="src\http_routes.cpp" />' }
+Replace-Checked $project '<ClCompile Include="src\http_routes.cpp" />' ($routeCompilePrefix + '<ClCompile Include="src\wechatagent_hook.cpp" /><ClCompile Include="src\sticker_sender.cpp" /><ClCompile Include="src\sticker_trace.cpp" /><ClCompile Include="src\file_sender.cpp" /><ClCompile Include="src\deferred_init.cpp" />')
 Replace-Checked $project 'psapi.lib;gdiplus.lib;' 'version.lib;psapi.lib;gdiplus.lib;'
 Replace-Checked $project '<PreprocessorDefinitions>' '<PreprocessorDefinitions>_DISABLE_CONSTEXPR_MUTEX_CONSTRUCTOR;'
 if (-not $MsBuild) {

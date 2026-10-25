@@ -9,6 +9,7 @@ on:
       - 'scripts/native-hook/**'
       - 'scripts/test-voice-feature.mjs'
       - 'scripts/test-reply-protocol.mjs'
+      - 'scripts/test-hook-build-script.mjs'
       - 'packages/dsh-voice-plugin/**'
       - 'package.json'
       - '.github/workflows/windows-voice-hook.yml'
@@ -27,10 +28,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22.16.0'
 
@@ -49,7 +50,7 @@ jobs:
       - name: Run voice and reply protocol tests
         shell: pwsh
         run: |
-          node --test scripts/test-voice-feature.mjs scripts/test-reply-protocol.mjs
+          node --test scripts/test-voice-feature.mjs scripts/test-reply-protocol.mjs scripts/test-hook-build-script.mjs
 
       - name: Check source privacy
         shell: pwsh
@@ -58,6 +59,20 @@ jobs:
       - name: Build voice-capable Windows x64 Hook
         shell: pwsh
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-hook.ps1
+
+      - name: Diagnose Hook source layout on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $source = 'components/WeChat-Hook'
+          if (Test-Path $source) {
+            Write-Output 'Hook source revision:'
+            git -C $source rev-parse HEAD 2>$null
+            Write-Output 'C++ translation units:'
+            Get-ChildItem $source -Recurse -File -Filter '*.cpp' | ForEach-Object { Resolve-Path -Relative $_.FullName }
+            Write-Output 'HTTP startup candidates:'
+            Get-ChildItem $source -Recurse -File -Filter '*.cpp' | Select-String -Pattern 'g_httpServer\s*->\s*Start\s*\(' | ForEach-Object { '{0}:{1}' -f $_.Path, $_.LineNumber }
+          } else { Write-Output 'Hook source checkout was not created.' }
 
       - name: Verify native build manifest
         shell: pwsh

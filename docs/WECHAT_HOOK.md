@@ -2,7 +2,7 @@
 
 源码发布副本提供本项目的版本、账号、令牌检查覆盖层与 OneBot 适配器，不包含第三方 Hook 源码、DLL、微信程序或安装包。
 
-来源：[mengyunqwq/wechat-hook](https://github.com/mengyunqwq/wechat-hook)，这是包含 `/SendVoiceMsg` 的语音能力分支。当前目标为 Windows x64 微信 `4.1.10.27`；构建时记录实际 Git 提交、源文件清单和 DLL SHA-256。构建脚本会拒绝缺少 `Route_SendVoiceMsg` 的普通 upstream 源码，避免生成“界面显示支持语音、底层实际不支持”的 DLL。
+来源：[mengyunqwq/wechat-hook](https://github.com/mengyunqwq/wechat-hook)，这是包含 `/SendVoiceMsg` 的语音能力分支。构建固定使用本次失败日志中观察到的提交 `e3f6cfc45701c5233d87024813ea8842aa7bfb4b`，避免上游 `main` 变动造成源码布局漂移。当前目标为 Windows x64 微信 `4.1.10.27`；构建时记录实际 Git 提交、源文件清单和 DLL SHA-256。若初始化源文件改名，脚本会根据 HTTP server 启动调用定位它；若语音路由定义位于 `src/http_routes.cpp`，脚本会先保留其实现到独立编译单元，再替换注册入口，避免覆盖掉 `/SendVoiceMsg` 的实现。构建脚本会拒绝缺少 `Route_SendVoiceMsg` 的普通 upstream 源码，避免生成“界面显示支持语音、底层实际不支持”的 DLL。
 
 ## 本机准备
 
