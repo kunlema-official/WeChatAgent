@@ -56,3 +56,13 @@ test('portable voice runtime probes avoid nested quotes in Windows PowerShell na
   assert.match(setup, /chr\(46\).*struct\.calcsize\(chr\(80\)\)\*8/);
   assert.doesNotMatch(prepare + setup, /print\("%d\.%d %d"/);
 });
+
+test('update-only packaging preserves the existing wx_key.dll instead of requiring an untracked source binary', () => {
+  const build = read('scripts/build-installer.mjs');
+  const deployment = read('apps/console-desktop/deployment.cjs');
+  assert.match(build, /const wxKeyDll = 'components\/weflow-cli\/resources\/key\/win32\/x64\/wx_key\.dll'/);
+  assert.match(build, /if \(fs\.existsSync\(path\.join\(root, wxKeyDll\)\)\)/);
+  assert.match(build, /if \(fs\.existsSync\(path\.join\(root, 'state\/hook\/wechat-4\.1\.10\.27\/Weixin\.exe'\)\)\)/);
+  assert.match(deployment, /for \(const relative of manifest\.files\)/);
+  assert.doesNotMatch(deployment, /rmSync\(target/);
+});
