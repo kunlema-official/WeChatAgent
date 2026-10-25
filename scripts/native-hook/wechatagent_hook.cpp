@@ -170,9 +170,8 @@ static std::set<std::string> DatabaseAccounts() {
 }
 
 void RegisterWeChatAgentRoutes(httplib::Server& server) {
-    // Register only the upstream voice route, not the upstream unauthenticated text/image routes.
-    // The voice route has its own one-shot marker gate and strict native-layout checks.
-    Route_SendVoiceMsg(server);
+    // Expose authenticated WeChatAgent voice routes below. The upstream voice sender
+    // remains linked, but its unauthenticated HTTP/debug endpoints are never registered.
     WeChatAgentInitStage("http_token_read");
     std::ifstream file(std::filesystem::path(ModulePath()).parent_path() / L"wechatagent-hook.token");
     std::string token;
@@ -189,6 +188,84 @@ void RegisterWeChatAgentRoutes(httplib::Server& server) {
         }
         return true;
     };
+
+    // Every voice operation is protected by the same Bearer token as the existing
+    // WeChatAgent routes. Verify the active account before affecting the client.
+    auto voiceAccountAllowed = [](const httplib::Request& req) {
+        const auto accounts = DatabaseAccounts();
+        return CoreVersion() == "4.1.10.27" && accounts.size() == 1 &&
+               accounts.count(req.get_header_value("X-WeChatAgent-Account")) == 1;
+    };
+    server.Post("/Debug/VoiceSend", [authorized,voiceAccountAllowed](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req, res)) return;
+        if (!voiceAccountAllowed(req)) {
+            res.status=409;res.set_content(R"({"ret":1,"error":"Version or account mismatch"})","application/json");return;
+        }
+        try {
+            const auto data=json::parse(req.body);
+            if (!data.is_object() || !data.contains("on") || !data["on"].is_boolean()) {
+                res.status=400;res.set_content(R"({"ret":1,"error":"Invalid voice switch"})","application/json");return;
+            }
+            WeixinSend::VoiceSendSetEnabled(data["on"].get<bool>());
+            res.set_content(WeixinSend::VoiceSendReportJson(),"application/json");
+        } catch (...) {
+            res.status=400;res.set_content(R"({"ret":1,"error":"Invalid voice switch"})","application/json");
+        }
+    });
+    server.Get("/Debug/VoiceSend", [authorized,voiceAccountAllowed](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req,res)) return;
+        if (!voiceAccountAllowed(req)) {
+            res.status=409;res.set_content(R"({"error":"Version or account mismatch"})","application/json");return;
+        }
+        res.set_content(WeixinSend::VoiceSendReportJson(),"application/json");
+    });
+    server.Post("/SendVoiceMsg", [authorized,voiceAccountAllowed](const httplib::Request& req, httplib::Response& res) {
+        if (!authorized(req,res)) return;
+        if (!voiceAccountAllowed(req)) {
+            res.status=409;res.set_content(R"({"ret":1,"error":"Version or account mismatch"})","application/json");return;
+        }
+        try {
+            const auto data=json::parse(req.body);
+            if (!data.is_object()) throw std::runtime_error("invalid body");
+            const auto target=data.value("wxidorgid",std::string());
+            const auto filename=data.value("path",std::string());
+            const auto mode=data.value("str0Mode",std::string());
+            if (!data.contains("durationMs") || !data["durationMs"].is_number_integer()) {
+                res.status=400;res.set_content(R"({"ret":1,"error":"Invalid duration"})","application/json");return;
+            }
+            const auto duration=data["durationMs"].get<int>();
+            if (target.empty() || target.size()>256 || filename.empty() || filename.size()>4096 ||
+                mode!="bytes" || duration<100 || duration>300000 ||
+                target.find_first_of("\r\n\0",0,3)!=std::string::npos) {
+                res.status=400;res.set_content(R"({"ret":1,"error":"Invalid voice metadata"})","application/json");return;
+            }
+            const std::filesystem::path audioPath(filename);
+            const std::string basename=audioPath.filename().string();
+            if (!audioPath.is_absolute() ||
+                !std::regex_match(basename,std::regex(R"((?:wa-voice-)?[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.silk)",std::regex::icase)) ||
+                !std::filesystem::is_regular_file(audioPath) ||
+                std::filesystem::file_size(audioPath)>4*1024*1024 ||
+                std::filesystem::file_size(audioPath)<16) {
+                res.status=400;res.set_content(R"({"ret":1,"error":"Invalid voice file"})","application/json");return;
+            }
+            char magic[9]{};
+            std::ifstream file(audioPath,std::ios::binary);
+            file.read(magic,sizeof(magic));
+            if (file.gcount()!=sizeof(magic) || std::memcmp(magic,"#!SILK_V3",sizeof(magic))!=0) {
+                res.status=400;res.set_content(R"({"ret":1,"error":"Invalid SILK audio"})","application/json");return;
+            }
+            std::unique_lock<std::timed_mutex> lock(sendMutex,std::defer_lock);
+            if (!lock.try_lock_for(std::chrono::seconds(1))) {
+                res.status=429;res.set_content(R"({"ret":1,"error":"Sender busy"})","application/json");return;
+            }
+            std::string diag;
+            const int ret=WeixinSend::SendVoice(target,filename,static_cast<unsigned int>(duration),mode,"",&diag);
+            res.set_content(json{{"ret",ret},{"retmsg",ret==0?"success":"voice send failed"}}.dump(),"application/json");
+        } catch (...) {
+            res.status=400;res.set_content(R"({"ret":1,"error":"Invalid voice request"})","application/json");
+        }
+    });
+
     WeChatAgentInitStage("http_routes_register");
     server.Get("/WeChatAgent/health", [authorized](const httplib::Request& req, httplib::Response& res) {
         if (!authorized(req, res)) return;
