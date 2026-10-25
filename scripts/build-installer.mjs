@@ -77,7 +77,16 @@ for (const name of [...scriptNames, 'wechat_group_bindings.py', 'dsh-configurati
 addTree('scripts/native-hook');
 for (const name of ['nt_decrypt.py','nt_common.py']) add('components/weflow-cli/scripts/' + name);
 add('components/weflow-cli/LICENSE');
-add('components/weflow-cli/resources/key/win32/x64/wx_key.dll');
+const wxKeyDll = 'components/weflow-cli/resources/key/win32/x64/wx_key.dll';
+if (fs.existsSync(path.join(root, wxKeyDll))) {
+  add(wxKeyDll);
+} else if (fs.existsSync(path.join(root, 'state/hook/wechat-4.1.10.27/Weixin.exe'))) {
+  throw new Error('A full installer with a bundled WeChat client requires wx_key.dll. Refusing to create an incomplete full installer.');
+} else {
+  // This workflow builds an update-only package for an existing 0.4.0 workspace.
+  // Do not delete or replace an existing workspace copy when the file is absent from source.
+  console.log('Update-only build: wx_key.dll is not redistributed; the existing workspace copy is preserved.');
+}
 for (const directory of ['core','onebot','adapters/wechat','dsh']) addTree('components/qq-bridge/src/' + directory, name => !name.includes('.test.'));
 for (const name of ['social-bridge.js','role-card.js','adapters/base-adapter.js']) add('components/qq-bridge/src/' + name);
 add('components/qq-bridge/LICENSE');
@@ -108,8 +117,16 @@ fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({ name:'wech
 copyFile(process.execPath, path.join(stage, 'runtime/node.exe'));
 if (!fs.existsSync(path.join(stage, 'runtime/python/python.exe'))) throw new Error('Run prepare-installer-runtime.mjs first.');
 const clientSource = path.join(root, 'state/hook/wechat-4.1.10.27');
-copyFile(path.join(clientSource, 'Weixin.exe'), path.join(vendor, 'wechat/Weixin.exe'));
-copyTree(path.join(clientSource, '4.1.10.27'), path.join(vendor, 'wechat/4.1.10.27'), name => !/\.disabled$|\.log$|\.token$/.test(name));
+const clientExecutable = path.join(clientSource, 'Weixin.exe');
+const clientRuntime = path.join(clientSource, '4.1.10.27');
+const clientBundled = fs.existsSync(clientExecutable);
+if (clientBundled) {
+  if (!fs.existsSync(clientRuntime) || !fs.statSync(clientRuntime).isDirectory()) throw new Error('Matching WeChat client folder is incomplete; refusing to create a partial full installer.');
+  copyFile(clientExecutable, path.join(vendor, 'wechat/Weixin.exe'));
+  copyTree(clientRuntime, path.join(vendor, 'wechat/4.1.10.27'), name => !/\.disabled$|\.log$|\.token$/.test(name));
+} else {
+  console.log('No WeChat client payload supplied; building an update-only installer that preserves the existing client in the data workspace.');
+}
 for (const name of ['version.dll','build.json']) copyFile(path.join(root, 'state/hook/native', name), path.join(vendor, 'hook', name));
 const pluginTemplate = path.join(project, 'packages/dsh-social-bridge-plugin/cordis.patch.yml');
 fs.writeFileSync(pluginTemplate, fs.readFileSync(pluginTemplate, 'utf8')
@@ -117,9 +134,11 @@ fs.writeFileSync(pluginTemplate, fs.readFileSync(pluginTemplate, 'utf8')
 const fileList = [...new Set(files)].sort();
 const sourceHashes = Object.fromEntries(fileList.map(file => [file, sha(fs.readFileSync(path.join(project,file)))]));
 const desktopHashes = Object.fromEntries(fs.readdirSync(appDir).filter(file=>fs.statSync(path.join(appDir,file)).isFile()).sort().map(file=>[file,sha(fs.readFileSync(path.join(appDir,file)))]));
-const runtimeRevision = sha(Buffer.from(JSON.stringify({node:sha(fs.readFileSync(process.execPath)),python:fs.readFileSync(path.join(stage,'runtime/python/DEPENDENCIES.json'),'utf8')}))).slice(0,12);
+const voiceRuntimeManifest = path.join(stage, 'runtime/voice-python/VOICE-RUNTIME.json');
+if (!fs.existsSync(voiceRuntimeManifest) || !fs.existsSync(path.join(stage, 'runtime/voice-python/python.exe'))) throw new Error('Run scripts/prepare-voice-runtime.ps1 first; the portable Python 3.11 voice runtime is required.');
+const runtimeRevision = sha(Buffer.from(JSON.stringify({node:sha(fs.readFileSync(process.execPath)),python:fs.readFileSync(path.join(stage,'runtime/python/DEPENDENCIES.json'),'utf8'),voicePython:fs.readFileSync(voiceRuntimeManifest,'utf8')}))).slice(0,12);
 const buildId = sha(Buffer.from(JSON.stringify({sourceHashes,desktopHashes,runtimeRevision,hook:sha(fs.readFileSync(path.join(vendor,'hook/version.dll')))}))).slice(0,16);
-fs.writeFileSync(path.join(project, 'deployment.json'), JSON.stringify({ version, buildId, builtAt:new Date().toISOString(), runtimeRevision, sourceHashes, files:fileList, presets:presetNames.map(name=>name.slice(0,-3)), node:process.version, python:'3.13.16', dshBundled:false,dshSdkVersion:DSH_SDK_VERSION,dshInstallUrl:DSH_INSTALL_URL, privateAccountDataIncluded:false, authorization:'Maintainer confirmed redistribution authorization for all currently used components and requested all current role files as bundled presets on 2026-10-05.' }, null, 2));
+fs.writeFileSync(path.join(project, 'deployment.json'), JSON.stringify({ version, buildId, builtAt:new Date().toISOString(), runtimeRevision, sourceHashes, files:fileList, presets:presetNames.map(name=>name.slice(0,-3)), node:process.version, python:'3.13.16', voicePython:'3.11.9', clientBundled, releaseType:clientBundled?'full':'update-only', dshBundled:false,dshSdkVersion:DSH_SDK_VERSION,dshInstallUrl:DSH_INSTALL_URL, privateAccountDataIncluded:false, authorization:'Maintainer confirmed redistribution authorization for all currently used components and requested all current role files as bundled presets on 2026-10-05.' }, null, 2));
 // No personal data can enter the deployment template or vendor programs.
 for (const file of fs.readdirSync(project, { recursive:true })) {
   const relative = String(file).replaceAll('\\','/');
@@ -162,7 +181,7 @@ process.env.ELECTRON_BUILDER_CACHE = path.join(root, 'state', 'installer-cache',
 process.env.CSC_IDENTITY_AUTO_DISCOVERY = 'false';
 process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL ??= '1';
 await build({ targets:Platform.WINDOWS.createTarget('nsis', Arch.x64), config: {
-  appId:'local.wechatagent.desktop', productName:'WeChatAgent', artifactName:'WeChatAgent-Setup-${version}-${arch}.${ext}',
+  appId:'local.wechatagent.desktop', productName:'WeChatAgent', artifactName:clientBundled?'WeChatAgent-Setup-${version}-${arch}.${ext}':'WeChatAgent-Voice-Update-${version}-${arch}.${ext}',
   buildVersion:version.endsWith('-fix')?version.replace(/-fix$/,'.1'):undefined,
   directories:{app:appDir, output:path.join(root,'release','installer'), buildResources:appDir},
   electronDist:path.join(root,'node_modules/electron/dist'), electronVersion:'41.1.1',

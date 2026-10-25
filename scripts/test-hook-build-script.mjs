@@ -37,3 +37,13 @@ test('GitHub Actions uses Node 24-compatible action releases', () => {
   assert.match(workflow, /actions\/checkout\@v5/);
   assert.match(workflow, /actions\/setup-node\@v5/);
 });
+
+test('Hook build disables the pinned upstream revoke call site', () => {
+  assert.ok(buildScript.includes("Replace-Checked $inlineLoadBuildFile 'if (g_WxVersion == 0) Patch_Revoke();'"));
+  assert.ok(!buildScript.includes("Replace-Checked $inlineLoadBuildFile '    Patch_Revoke();'"));
+});
+
+test('Hook build keeps dllmain braces valid when leaving the module visible', () => {
+  assert.ok(buildScript.includes("Replace-Checked (Join-Path $build 'dllmain.cpp') 'HideModuleFromPEB(hModule);' '; /* WeChatAgent keeps the module visible for diagnostics. */'"));
+  assert.ok(!buildScript.includes("'// WeChatAgent keeps the module visible for diagnostics.'"));
+});

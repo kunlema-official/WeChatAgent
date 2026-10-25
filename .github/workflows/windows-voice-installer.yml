@@ -1,0 +1,125 @@
+name: Windows Voice Preview Installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/console-desktop/deployment.cjs'
+      - 'scripts/build-hook.ps1'
+      - 'scripts/build-installer.mjs'
+      - 'scripts/hook-build-policy.mjs'
+      - 'scripts/native-hook/**'
+      - 'scripts/prepare-installer-runtime.mjs'
+      - 'scripts/prepare-voice-runtime.ps1'
+      - 'scripts/setup-voice.ps1'
+      - 'scripts/voice-requirements.txt'
+      - 'scripts/test-installer-runtime.mjs'
+      - 'scripts/test-voice-feature.mjs'
+      - 'scripts/test-reply-protocol.mjs'
+      - 'packages/dsh-voice-plugin/**'
+      - 'packages/dsh-social-bridge-plugin/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/windows-voice-installer.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-voice-installer-\${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-update-installer:
+    name: Build Windows x64 voice update installer
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.16.0'
+          cache: npm
+
+      - name: Set up Python for packaging voice wheels
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11.9'
+          architecture: 'x64'
+          cache: pip
+          cache-dependency-path: scripts/voice-requirements.txt
+
+      - name: Install root build dependencies
+        shell: pwsh
+        run: npm ci --no-audit --no-fund
+
+      - name: Install DSH bridge plugin dependencies
+        shell: pwsh
+        run: npm ci --prefix packages/dsh-social-bridge-plugin --no-audit --no-fund
+
+      - name: Run focused tests
+        shell: pwsh
+        run: node --test scripts/test-voice-feature.mjs scripts/test-reply-protocol.mjs scripts/test-hook-build-script.mjs scripts/test-installer-directory.mjs scripts/test-installer-runtime.mjs
+
+      - name: Check source privacy
+        shell: pwsh
+        run: node scripts/public-source-check.mjs
+
+      - name: Build voice-capable Windows x64 Hook
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-hook.ps1
+
+      - name: Prepare portable Python 3.13 reader runtime
+        shell: pwsh
+        run: node scripts/prepare-installer-runtime.mjs
+
+      - name: Prepare portable Python 3.11 voice runtime
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-voice-runtime.ps1
+
+      - name: Build update-only installer
+        shell: pwsh
+        run: npm run installer:build
+
+      - name: Verify installer and write checksums
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath 'release/installer' -Filter 'WeChatAgent-Voice-Update-*.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Update-only installer was not produced.' }
+          $hook = Get-Content -LiteralPath 'state/hook/native/build.json' -Raw | ConvertFrom-Json
+          $deployment = Get-Content -LiteralPath 'state/installer-stage/project/deployment.json' -Raw | ConvertFrom-Json
+          if ($hook.targetVersion -ne '4.1.10.27') { throw 'Hook target version mismatch.' }
+          if ($deployment.releaseType -ne 'update-only' -or $deployment.clientBundled -ne $false) { throw 'Expected update-only package without a WeChat client payload.' }
+          $installerHash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$installerHash  $($installer.Name)" | Set-Content -LiteralPath 'release/installer/SHA256SUMS.txt' -Encoding ASCII
+          $verification = [ordered]@{
+            product = 'WeChatAgent'
+            version = $deployment.version
+            releaseType = $deployment.releaseType
+            clientBundled = $deployment.clientBundled
+            artifact = $installer.Name
+            installerSha256 = $installerHash
+            hookDllSha256 = $hook.sha256
+            targetWeChatVersion = $hook.targetVersion
+            hookSourceCommit = $hook.commit
+            sourceCommit = $env:GITHUB_SHA
+            builtAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+            checks = @('focused-tests-passed','privacy-scan-passed','hook-build-manifest-verified','portable-voice-runtime-import-probe-passed')
+            limitations = @('No live WeChat process or real voice-bubble send was tested by this cloud build.','This update-only installer expects an existing WeChatAgent data workspace with a matching WeChat 4.1.10.27 client.')
+          }
+          $verification | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'release/installer/VERIFICATION.json' -Encoding UTF8
+
+      - name: Upload update installer and verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeChatAgent-0.5.0-preview.2-Windows-x64-voice-update
+          path: |
+            release/installer/WeChatAgent-Voice-Update-*.exe
+            release/installer/SHA256SUMS.txt
+            release/installer/VERIFICATION.json
+          if-no-files-found: error
+          retention-days: 14
