@@ -47,3 +47,16 @@ test('Hook build keeps dllmain braces valid when leaving the module visible', ()
   assert.ok(buildScript.includes("Replace-Checked (Join-Path $build 'dllmain.cpp') 'HideModuleFromPEB(hModule);' '; /* WeChatAgent keeps the module visible for diagnostics. */'"));
   assert.ok(!buildScript.includes("'// WeChatAgent keeps the module visible for diagnostics.'"));
 });
+
+test('native voice send and switch endpoints are authenticated and account checked', () => {
+  const native = fs.readFileSync(path.join(root, 'scripts', 'native-hook', 'wechatagent_hook.cpp'), 'utf8');
+  assert.doesNotMatch(native, /Route_SendVoiceMsg\(server\);/);
+  assert.match(native, /server\.Post\("\/SendVoiceMsg", \[authorized,voiceAccountAllowed\]/);
+  assert.match(native, /server\.Post\("\/Debug\/VoiceSend", \[authorized,voiceAccountAllowed\]/);
+  assert.match(native, /server\.Get\("\/Debug\/VoiceSend", \[authorized,voiceAccountAllowed\]/);
+  assert.match(native, /accounts\.size\(\) == 1/);
+  assert.match(native, /X-WeChatAgent-Account/);
+  assert.match(native, /VoiceSendSetEnabled\(data\["on"\]\.get<bool>\(\)\)/);
+  assert.match(native, /WeixinSend::SendVoice\(target,filename/);
+  assert.match(native, /SILK audio/);
+});

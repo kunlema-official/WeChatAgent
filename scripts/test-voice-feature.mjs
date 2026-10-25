@@ -254,7 +254,7 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
   assert.match(build, /\(dsh-social-bridge-plugin\|dsh-voice-plugin\)/);
   const hook = fs.readFileSync(new URL('./native-hook/wechatagent_hook.cpp', import.meta.url), 'utf8');
   const buildHook = fs.readFileSync(new URL('./build-hook.ps1', import.meta.url), 'utf8');
-  assert.match(hook, /Route_SendVoiceMsg\(server\)/);
+  assert.match(hook, /server\.Post\("\/SendVoiceMsg", \[authorized,voiceAccountAllowed\]/);
   assert.match(hook, /nativeVoiceSend",CoreVersion\(\)=="4\.1\.10\.27"/);
   assert.match(buildHook, /mengyunqwq\/wechat-hook/);
   assert.match(buildHook, /Route_SendVoiceMsg/);
