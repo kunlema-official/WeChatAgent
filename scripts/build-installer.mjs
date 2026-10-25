@@ -77,7 +77,16 @@ for (const name of [...scriptNames, 'wechat_group_bindings.py', 'dsh-configurati
 addTree('scripts/native-hook');
 for (const name of ['nt_decrypt.py','nt_common.py']) add('components/weflow-cli/scripts/' + name);
 add('components/weflow-cli/LICENSE');
-add('components/weflow-cli/resources/key/win32/x64/wx_key.dll');
+const wxKeyDll = 'components/weflow-cli/resources/key/win32/x64/wx_key.dll';
+if (fs.existsSync(path.join(root, wxKeyDll))) {
+  add(wxKeyDll);
+} else if (fs.existsSync(path.join(root, 'state/hook/wechat-4.1.10.27/Weixin.exe'))) {
+  throw new Error('A full installer with a bundled WeChat client requires wx_key.dll. Refusing to create an incomplete full installer.');
+} else {
+  // This workflow builds an update-only package for an existing 0.4.0 workspace.
+  // Do not delete or replace an existing workspace copy when the file is absent from source.
+  console.log('Update-only build: wx_key.dll is not redistributed; the existing workspace copy is preserved.');
+}
 for (const directory of ['core','onebot','adapters/wechat','dsh']) addTree('components/qq-bridge/src/' + directory, name => !name.includes('.test.'));
 for (const name of ['social-bridge.js','role-card.js','adapters/base-adapter.js']) add('components/qq-bridge/src/' + name);
 add('components/qq-bridge/LICENSE');
