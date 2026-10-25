@@ -31,7 +31,7 @@ test('installer packages portable Python 3.11 and runtime bootstrap copies it', 
   assert.match(setup, /voice-python\\python\.exe/);
   assert.match(setup, /mode = 'bundled'/);
   assert.match(prepare, /33b448f95fecb7c6f802157dbd5e6b40a2ad9bfc8b95ca634a06ba4073ad1ac0/);
-  assert.match(prepare, /VOICE_RUNTIME_OK/);
+  assert.match(prepare, /notmatch '3 11 9 64'/);
 });
 
 test('Windows cloud workflow builds and verifies the update installer', () => {
