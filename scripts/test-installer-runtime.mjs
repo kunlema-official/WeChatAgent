@@ -36,6 +36,10 @@ test('installer packages portable Python 3.11 and runtime bootstrap copies it', 
 
 test('Windows cloud workflow builds and verifies the update installer', () => {
   const workflow = read('.github/workflows/windows-voice-installer.yml');
+  const installDoc = read('docs/VOICE_UPDATE_INSTALL.md');
+  assert.match(installDoc, /仅升级/);
+  assert.match(installDoc, /MIMO_API_KEY/);
+  assert.match(installDoc, /不要在微信仍运行时替换/);
   assert.match(workflow, /runs-on: windows-2022/);
   assert.match(workflow, /setup-python@v6/);
   assert.match(workflow, /prepare-voice-runtime\.ps1/);
