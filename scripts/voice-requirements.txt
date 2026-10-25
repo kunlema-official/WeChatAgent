@@ -1,0 +1,4 @@
+# Installed into a dedicated Python 3.11 venv; never changes the app's Python 3.13 runtime.
+pilk==0.2.4
+edge-tts==7.3.1
+imageio-ffmpeg==0.6.0

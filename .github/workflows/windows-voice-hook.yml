@@ -1,0 +1,85 @@
+name: Windows Voice Hook Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/build-hook.ps1'
+      - 'scripts/native-hook/**'
+      - 'scripts/test-voice-feature.mjs'
+      - 'scripts/test-reply-protocol.mjs'
+      - 'packages/dsh-voice-plugin/**'
+      - 'package.json'
+      - '.github/workflows/windows-voice-hook.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-voice-hook-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    name: Build x64 Hook and run focused tests
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+
+      - name: Report build tools
+        shell: pwsh
+        run: |
+          node --version
+          npm --version
+          git --version
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw 'vswhere.exe not found on Windows runner.' }
+          $msbuild = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw 'MSVC x64 toolchain / MSBuild was not found.' }
+          Write-Output "MSBuild=$msbuild"
+
+      - name: Run voice and reply protocol tests
+        shell: pwsh
+        run: |
+          node --test scripts/test-voice-feature.mjs scripts/test-reply-protocol.mjs
+
+      - name: Check source privacy
+        shell: pwsh
+        run: node scripts/public-source-check.mjs
+
+      - name: Build voice-capable Windows x64 Hook
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-hook.ps1
+
+      - name: Verify native build manifest
+        shell: pwsh
+        run: |
+          $dll = 'state/hook/native/version.dll'
+          $manifestPath = 'state/hook/native/build.json'
+          if (-not (Test-Path $dll)) { throw 'Build did not produce version.dll.' }
+          if (-not (Test-Path $manifestPath)) { throw 'Build did not produce build.json.' }
+          $manifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
+          if ($manifest.voiceRoute -ne 'Route_SendVoiceMsg') { throw 'Manifest does not confirm the voice send route.' }
+          if ($manifest.targetVersion -ne '4.1.10.27') { throw 'Unexpected target WeChat version.' }
+          $actual = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $manifest.sha256.ToLowerInvariant()) { throw 'DLL SHA-256 does not match build manifest.' }
+          Write-Output "DLL SHA-256: $actual"
+          Write-Output "Hook source commit: $($manifest.commit)"
+
+      - name: Upload native Hook artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeChatAgent-0.5.0-preview.2-Windows-x64-voice-hook
+          path: |
+            state/hook/native/version.dll
+            state/hook/native/build.json
+          if-no-files-found: error
+          retention-days: 14

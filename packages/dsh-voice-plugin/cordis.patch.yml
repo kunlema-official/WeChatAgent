@@ -1,0 +1,6 @@
+# Loaded before the social bridge so its service is available when RPC routes start.
+- insert:
+    - id: dsh-voice-plugin
+      name: dsh-voice-plugin/index.mjs
+      config:
+        projectRoot: .
