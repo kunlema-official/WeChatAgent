@@ -47,3 +47,12 @@ test('Windows cloud workflow builds and verifies the update installer', () => {
   assert.match(workflow, /installerSha256/);
   assert.match(workflow, /upload-artifact@v4/);
 });
+
+test('portable voice runtime probes avoid nested quotes in Windows PowerShell native arguments', () => {
+  const prepare = read('scripts/prepare-voice-runtime.ps1');
+  const setup = read('scripts/setup-voice.ps1');
+  assert.match(prepare, /print\(sys\.version_info\.major,sys\.version_info\.minor,sys\.version_info\.micro,struct\.calcsize\(chr\(80\)\)\*8\)/);
+  assert.match(prepare, /notmatch '3 11 9 64'/);
+  assert.match(setup, /chr\(46\).*struct\.calcsize\(chr\(80\)\)\*8/);
+  assert.doesNotMatch(prepare + setup, /print\("%d\.%d %d"/);
+});
