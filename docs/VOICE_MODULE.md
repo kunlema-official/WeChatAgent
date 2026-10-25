@@ -16,13 +16,13 @@ Recommended initial rollout: enable one private chat, test short Chinese voice m
 
 ## Voice runtime on Windows 11
 
-The cloud-built preview update installer bundles a portable CPython 3.11 x64 runtime and the pinned `pilk`, `edge-tts`, and `imageio-ffmpeg` wheels. On a packaged installation, run:
+The cloud-built preview update installer bundles a portable CPython 3.11 x64 runtime and the pinned `pilk`, `edge-tts`, and `imageio-ffmpeg` wheels. On a packaged installation, desktop bootstrap automatically registers that interpreter in `state/voice/python.json`; users do not need to install Python or run a package manager. To verify or repair the voice runtime manually, run:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup-voice.ps1
 ```
 
-The script detects the bundled runtime, verifies its imports, and records its path in `state/voice/python.json`. It does not modify the existing Python 3.13 reader runtime and does not require a system-wide Python or C++ build toolchain. When running directly from a source checkout without the packaged runtime, the developer fallback still requires Python 3.11 x64 and creates a dedicated environment. After setup, fully restart DSH and WeChatAgent.
+The script detects the bundled runtime and verifies its imports. It does not modify the existing Python 3.13 reader runtime and does not require a system-wide Python or C++ build toolchain. When running directly from a source checkout without the packaged runtime, the developer fallback still requires Python 3.11 x64 and creates a dedicated environment. Fully restart DSH and WeChatAgent after updating the plugin.
 
 ASR also requires the DSH `speechToText` service and the `sensevoice-local` provider. TTS defaults to Xiaomi MiMo `mimo-v2.5-tts`; set `MIMO_API_KEY` in the Windows user environment, then sign out/in or launch both WeChatAgent and DSH from a fresh shell that inherits the variable. The key is not stored in project JSON. See the plugin README for voices and privacy details. Check the authenticated `/voice/status` endpoint if either service is unavailable.
 
