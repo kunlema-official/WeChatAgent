@@ -13,6 +13,8 @@ on:
       - 'packages/dsh-voice-plugin/**'
       - 'package.json'
       - '.github/workflows/windows-voice-hook.yml'
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
