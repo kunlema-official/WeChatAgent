@@ -26,7 +26,7 @@ MiMo is the default provider. If the API key is missing, network access fails, o
 
 ## Chat policy
 
-Voice processing is disabled by default. Enable it for an individual chat in **Chat → Settings → Voice**. A per-chat override takes precedence over `wechat.voice.enabled`. The reader exposes audio only for the current account and configured whitelist conversations.
+Voice processing is disabled by default. In the console, keep **Settings → Chat defaults → Voice recognition and replies** off for the account default, then open **Chat → select one saved chat → Set this chat → Voice recognition and replies → On** to enable only that chat. Per-chat On/Off overrides `wechat.voice.enabled`; “inherit” follows the account default. The reader exposes audio only for the current account and configured whitelist conversations.
 
 ## Important output limitation in this preview
 
