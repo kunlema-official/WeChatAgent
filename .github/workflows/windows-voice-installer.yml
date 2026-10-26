@@ -80,6 +80,10 @@ jobs:
         shell: pwsh
         run: node --test scripts/test-voice-feature.mjs scripts/test-reply-protocol.mjs scripts/test-hook-build-script.mjs scripts/test-installer-directory.mjs scripts/test-installer-runtime.mjs
 
+      - name: Run full repository test suite
+        shell: pwsh
+        run: npm test
+
       - name: Check source privacy
         shell: pwsh
         run: node scripts/public-source-check.mjs
