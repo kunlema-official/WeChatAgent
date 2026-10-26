@@ -32,7 +32,7 @@ The WeChatAgent adapter already calls `/SendVoiceMsg` with a one-shot local gate
 
 ## Updating from 0.4.0
 
-This source preview is not a Windows installer. Do not copy it over the live installation. First build the native Hook in the supported Windows environment, run the project tests, and build the 0.5.0 preview installer. The desktop installer keeps user data outside the app directory; before testing an update, back up the workspace `state` directory and confirm the existing AppData/workspace mapping. The update must preserve chat history, persona files, whitelist and DSH settings. Full voice output should not be called release-ready until the voice-capable Hook build and actual Windows voice-bubble send/receipt have been validated.
+The source branch itself is not an installer and must not be copied over a live installation. Use the `Windows Voice Preview Installer` GitHub Actions artifact for the packaged update. The workflow builds the native Hook, prepares both portable Python runtimes, runs the focused voice/reply/installer tests plus the full repository suite, checks source privacy, and records SHA-256 verification data. This still does not replace real Windows 11 end-to-end testing with the user's WeChat process. Before installing, close WeChat and DSH, back up the workspace `state` directory, confirm the existing AppData/workspace mapping, and keep the previous installation available for rollback. The update must preserve chat history, persona files, whitelist and DSH settings. Full voice output should not be called release-ready until the voice-capable Hook build and actual Windows voice-bubble send/receipt have been validated.
 
 
 ## Validation scope
