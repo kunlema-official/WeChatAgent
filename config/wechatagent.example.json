@@ -26,6 +26,10 @@
     ]
   },
   "wechat": {
+    "voice": {
+      "enabled": false,
+      "chats": {}
+    },
     "whitelist": {
       "groups": [],
       "private": []
