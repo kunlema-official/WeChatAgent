@@ -74,6 +74,38 @@ export class WechatOneBotAdapter extends BaseAdapter {
     this.recentOutgoing.set(this.#fingerprint(kind, id, content), Date.now() + this.antiLoopTtlMs);
     this.stats.sends++; return { accepted: true, confirmed: true, response: result, delivered: 'database-confirmed' };
   }
+  async sendVoice({kind,target,text,deliveryId,source,contextId}){
+    if(kind!=='private'&&kind!=='group')throw new TypeError('invalid WeChat kind');
+    const content=String(text??'').trim();
+    if(!content||[...content].length>240)throw new TypeError('WeChat voice text must contain 1–240 characters');
+    const id=Number(target);
+    if(!Number.isSafeInteger(id)||id<=0)throw new TypeError('WeChat target must be a synthetic integer ID');
+    const action=kind==='group'?'send_group_msg':'send_private_msg';
+    const params={
+      [kind==='group'?'group_id':'user_id']:id,
+      message:[{type:'wechat_voice',data:{text:content}}],
+      ...(deliveryId?{wechatagent_delivery_id:deliveryId}:{}),
+      ...(source==='proactive'?{wechatagent_source:'proactive',wechatagent_context_id:contextId}:{})
+    };
+    let result;
+    try{result=await this.server.action(action,params);}
+    catch(error){
+      const uncertainVoice=error.code==='VOICE_DELIVERY_UNCONFIRMED';
+      const uncertainFallback=error.code==='TEXT_DELIVERY_UNCONFIRMED';
+      if((!uncertainVoice&&!uncertainFallback)||error.data?.attempted!==true)throw error;
+      this.#prune(Date.now());
+      this.recentOutgoing.set(this.#fingerprint(kind,id,content),Date.now()+this.antiLoopTtlMs);
+      this.log('[WeChat] '+(uncertainVoice?'voice':'voice_fallback_text')+'_delivery_unconfirmed operation='+String(deliveryId??'').slice(0,12));
+      return {accepted:false,attempted:true,confirmed:false,delivered:'unconfirmed',
+        media_type:uncertainVoice?'wechat-voice':'text-fallback',deliveryId};
+    }
+    if(result.data?.receipt!=='wechat-server-id')throw new Error('WeChat voice send response has no verified server receipt');
+    if(!['wechat-voice','text-fallback'].includes(result.data?.media_type))throw new Error('WeChat voice send response has no recognized media type');
+    this.#prune(Date.now());
+    this.recentOutgoing.set(this.#fingerprint(kind,id,content),Date.now()+this.antiLoopTtlMs);
+    this.stats.sends++;
+    return {...result.data,accepted:true,confirmed:true,delivered:result.data.delivered??'database-confirmed',deliveryId};
+  }
   async stickerChoices({kind,target,query}){
     const result=await this.server.action('get_sticker_list',{kind,target:String(target),...(typeof query==='string'&&query.trim()?{query:query.slice(0,500)}:{})});
     return result.data?.enabled?(result.data.stickers??[]):[];
