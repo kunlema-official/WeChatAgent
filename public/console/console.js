@@ -386,22 +386,22 @@ function openChatSettings(key) {
       const saveButton = $('#chat-settings-save');
       if (!form.isConnected || saveButton.disabled) return;
       errorBox.textContent = '';
-      const contextText = form.elements.context.value.trim();
+      const contextText = form.elements.namedItem('context').value.trim();
       const context = contextText === '' ? null : Number(contextText);
       if (context !== null && (!Number.isSafeInteger(context) || (context !== 0 && (context < 4000 || context > 2000000)))) {
         errorBox.textContent = '上下文阈值必须留空、填 0，或填写 4,000–2,000,000 之间的整数。';
         return;
       }
-      const readTri = name => form.elements[name].value === 'inherit' ? null : form.elements[name].value === 'on';
+      const readTri = name => form.elements.namedItem(name).value === 'inherit' ? null : form.elements.namedItem(name).value === 'on';
       const nextSettings = {
-        persona: form.elements.persona.value || null,
-        workMode: form.elements.workMode.value,
-        adminOnly: group ? form.elements.adminOnly.checked : true,
-        fileTransfer: form.elements.fileTransfer.checked,
-        mode: group ? (form.elements.mode.value === 'inherit' ? null : form.elements.mode.value) : null,
+        persona: form.elements.namedItem('persona').value || null,
+        workMode: form.elements.namedItem('workMode').value,
+        adminOnly: group ? form.elements.namedItem('adminOnly').checked : true,
+        fileTransfer: form.elements.namedItem('fileTransfer').checked,
+        mode: group ? (form.elements.namedItem('mode').value === 'inherit' ? null : form.elements.namedItem('mode').value) : null,
         stickers: readTri('stickers'),
         search: readTri('search'),
-        proactive: form.elements.proactive.checked,
+        proactive: form.elements.namedItem('proactive').checked,
         context,
         voice: readTri('voice'),
       };
