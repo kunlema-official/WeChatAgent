@@ -12,7 +12,7 @@
 
 `wechat.voice.enabled` is the account-level default (false). `wechat.voice.chats` is a map keyed by `wechat:private:<numeric-id>` or `wechat:group:<numeric-id>`. A boolean overrides the default; deleting the key restores inheritance.
 
-Recommended initial rollout: enable one private chat, test short Chinese voice messages, then test a group only if needed. Existing chats stay disabled after migration.
+Console path: **Settings → Chat defaults → Voice recognition and replies** controls the account default (false by default). For a safer rollout, leave that default off, then open **Chat → select one saved private chat → Set this chat → Voice recognition and replies → On**. A per-chat On/Off overrides the account default; “inherit” restores the default. Test short Chinese voice messages in that one private chat before enabling any group. Existing chats stay disabled after migration.
 
 ## Voice runtime on Windows 11
 
