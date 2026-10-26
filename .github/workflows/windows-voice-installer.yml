@@ -3,7 +3,7 @@ name: Windows Voice Preview Installer
 on:
   workflow_dispatch:
   push:
-    branches: [upgrade/0.4.1-voice-integration]
+    branches: [upgrade/0.4.1-voice-integration, fix/voice-ui-20261026]
     paths:
       - 'apps/**'
       - 'components/**'
