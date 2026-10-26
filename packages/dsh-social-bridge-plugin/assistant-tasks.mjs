@@ -8,6 +8,22 @@ export const liveTask=task=>['queued','running','waiting_approval','waiting_inpu
 const terminal=new Set(['completed','failed','cancelled','interrupted']);
 const short=value=>String(value??'').replace(/[\x00-\x08\x0b-\x1f\x7f]/g,'').slice(0,300);
 
+// Only an explicitly labelled public message accompanying a real tool request
+// is progress. Never forward reasoning blocks, partial streams or tool output.
+export function assistantProgressText(message){
+  const blocks=Array.isArray(message?.content)?message.content:[];
+  if(!(Array.isArray(message?.toolCalls)&&message.toolCalls.length)&&!blocks.some(block=>['tool-call','tool_call','tool_use'].includes(block.type)))return '';
+  const text=blocks.filter(block=>block.type==='text'&&typeof block.text==='string').map(block=>block.text).join('').trim();
+  const match=/^WECHAT_PROGRESS:[ \t]*([^\r\n]{1,160})$/.exec(text);if(!match)return '';
+  return publicProgressText(match[1]);
+}
+export function publicProgressText(text){
+  if(typeof text!=='string')return '';
+  const value=text.replace(/^🐟\s*/, '').trim();
+  if(!value||Array.from(value).length>80||/[\x00-\x1f\x7f]|RESPOND:|SILENT|WECHAT_PROGRESS:|<\/?(?:think|analysis|reasoning)\b|\[STICKER:|\bT[a-f0-9]{16}\b|排队中/i.test(value))return '';
+  return value;
+}
+
 // Persist before admission. Uncertain native executions are never replayed after
 // a host restart: continuing them requires a fresh, authenticated user request.
 export class AssistantTasks {
@@ -17,14 +33,14 @@ export class AssistantTasks {
       const stat=fs.lstatSync(file);if(stat.isSymbolicLink()||stat.size>64*1024*1024)throw taskFault('ASSISTANT_TASK_STORE_INVALID');
       const data=JSON.parse(fs.readFileSync(file,'utf8'));if(data.version!==1||!Array.isArray(data.tasks)||data.tasks.length>200)throw taskFault('ASSISTANT_TASK_STORE_INVALID');
       for(const job of data.tasks){if(!/^T[a-f0-9]{16}$/.test(job.id)||!['queued','running','waiting_approval','waiting_input','cancelling',...terminal].includes(job.state)||!job.request||!/^[a-f0-9]{64}$/.test(job.batchId))throw taskFault('ASSISTANT_TASK_STORE_INVALID');
-        if(['running','waiting_approval','waiting_input','cancelling'].includes(job.state)){job.state='interrupted';job.error='DSH_RESTARTED_REVIEW_BEFORE_CONTINUING';job.finishedAt=now();delete job.approval;delete job.question;}
+        if(['queued','running','waiting_approval','waiting_input','cancelling'].includes(job.state)){job.state='interrupted';job.error='DSH_RESTARTED_REVIEW_BEFORE_CONTINUING';job.finishedAt=now();delete job.approval;delete job.question;}
         this.jobs.set(job.id,job);
       }
       this.persist();
     }
   }
   persist(){fs.mkdirSync(path.dirname(this.file),{recursive:true});const temp=this.file+'.'+process.pid+'.tmp';fs.writeFileSync(temp,JSON.stringify({version:1,tasks:[...this.jobs.values()]}),{mode:0o600});fs.renameSync(temp,this.file);}
-  view(job,{result=false}={}){return job?{id:job.id,parentId:job.parentId??null,conversationKey:job.key,owner:job.sender,state:job.state,createdAt:job.createdAt,startedAt:job.startedAt??null,finishedAt:job.finishedAt??null,stage:job.stage??'',tool:job.tool??null,steps:job.steps??0,sessionId:job.sessionId??null,...(job.error?{error:job.error}:{}),...(job.approval?{approval:job.approval}:{}),...(job.question?{question:job.question}:{}),...(result&&job.output?{output:job.output}:{}),revision:job.revision??0}:null;}
+  view(job,{result=false}={}){return job?{id:job.id,parentId:job.parentId??null,conversationKey:job.key,owner:job.sender,state:job.state,createdAt:job.createdAt,startedAt:job.startedAt??null,finishedAt:job.finishedAt??null,stage:job.stage??'',tool:job.tool??null,steps:job.steps??0,sessionId:job.sessionId??null,...(job.feedback?{feedback:job.feedback}:{}),...(job.error?{error:job.error}:{}),...(job.approval?{approval:job.approval}:{}),...(job.question?{question:job.question}:{}),...(result&&job.output?{output:job.output}:{}),revision:job.revision??0}:null;}
   get(id){return this.jobs.get(id);}
   list(key,sender,{admin=false}={}){return [...this.jobs.values()].filter(job=>job.key===key&&(admin||job.sender===sender)).sort((a,b)=>b.createdAt-a.createdAt).slice(0,20).map(job=>this.view(job));}
   submit(request){
@@ -52,6 +68,9 @@ export class AssistantTasks {
     return {job,controller,finish};
   }
   progress(id,stage,{tool,sessionId,step=false}={}){const job=this.jobs.get(id);if(!job||!liveTask(job))return;Object.assign(job,{stage:short(stage),...(tool?{tool:short(tool)}:{}),...(sessionId?{sessionId}:{}),...(step?{steps:(job.steps??0)+1}:{}),revision:(job.revision??0)+1});if(!this.progressTimer)this.progressTimer=setTimeout(()=>{this.progressTimer=null;try{this.persist();}catch{this.persistenceDelayed=true;}},500);this.progressTimer.unref?.();return this.view(job);}
+  putFeedback(id,text,source){const job=this.jobs.get(id);text=publicProgressText(text);if(job?.state!=='running'||!text||job.feedback?.text===text)return false;job.feedback={id:(job.feedback?.id??0)+1,text,source,at:this.now()};this.progress(id,job.stage);return true;}
+  progressMessage(id,message){return this.putFeedback(id,assistantProgressText(message),'model');}
+  progressHeartbeat(id,text){return this.putFeedback(id,text,'heartbeat');}
   cancel(id){const job=this.jobs.get(id);if(!job)throw taskFault('ASSISTANT_TASK_NOT_FOUND',404);if(job.state==='queued')return this.update(id,{state:'cancelled',stage:'已取消',finishedAt:this.now()});if(liveTask(job)){this.update(id,{state:'cancelling',stage:'正在取消'});this.active.get(id)?.abort(taskFault('task_cancelled'));}return this.view(job);}
   pump(){
     if(this.closed||this.active.size>=this.concurrency)return;
@@ -65,7 +84,7 @@ export class AssistantTasks {
       }).catch(error=>{if(!this.closed)this.update(job.id,{state:controller.signal.aborted?'cancelled':'failed',stage:controller.signal.aborted?'已取消':'执行失败',error:short(error.code??error.message),finishedAt:this.now(),admitted:error.admitted===true});}).finally(()=>{this.active.delete(job.id);if(!this.closed)this.pump();});
     }
   }
-  close(){this.closed=true;clearTimeout(this.progressTimer);this.progressTimer=null;for(const [id,controller]of this.active){this.update(id,{state:'interrupted',stage:'DSH 已退出，需检查后继续',finishedAt:this.now(),error:'DSH_STOPPED'});controller.abort(taskFault('plugin_stopped'));}this.persist();}
+  close(){this.closed=true;clearTimeout(this.progressTimer);this.progressTimer=null;for(const job of this.jobs.values())if(job.state==='queued')this.update(job.id,{state:'interrupted',stage:'DSH 已退出，需检查后继续',finishedAt:this.now(),error:'DSH_STOPPED'});for(const [id,controller]of this.active){this.update(id,{state:'interrupted',stage:'DSH 已退出，需检查后继续',finishedAt:this.now(),error:'DSH_STOPPED'});controller.abort(taskFault('plugin_stopped'));}this.persist();}
 }
 
 export const assistantHelp='助手模式可在当前 DSH 工作区执行已授权的任务。\n直接描述需求，或发送：\n新任务 具体要求\n任务列表\n任务状态 [任务编号]\n取消任务 [任务编号]\n继续任务 任务编号 补充要求\n助手能力\n回答 Q… 答案\n工作区列表（管理员）\n切换工作区 工作区编号（需再次确认）\n批准 审批编号 / 拒绝 审批编号（管理员）\n群聊中请 @ 助手或使用唤醒词。';

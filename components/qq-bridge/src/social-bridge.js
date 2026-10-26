@@ -1,11 +1,13 @@
+import {pluginEnabled} from '../../../packages/plugin-api/catalog.mjs';
+import {replyMessageLimit} from '../../../packages/dsh-social-bridge-plugin/reply-layout-policy.mjs';
 import {AssistantFeedback} from '../../../packages/dsh-social-bridge-plugin/assistant-feedback.mjs';
-import {isSilentAssistantNotification} from '../../../packages/dsh-social-bridge-plugin/assistant-notifications.mjs';
+import {createAssistantNoticeDelivery} from './core/assistant-notice-delivery.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { WechatOneBotAdapter } from './adapters/wechat/wechat-onebot-adapter.js';
 import { MessageBuffer } from './core/message-buffer.js';
-import {parseSocialDecision,hasReasoningControl} from './core/decision-format.js';
-import { SocialEngine } from './core/social-engine.js';
+import {DshConnectionGuard} from './core/dsh-connection.js';
+import { SocialEngine,assistantChatRequest } from './core/social-engine.js';
 import { DshPluginClient } from './dsh/plugin-client.js';
 import { buildConversationKey } from './core/conversation-key.js';
 import { selectRoleText } from './role-card.js';
@@ -14,7 +16,9 @@ import { stickerPolicy } from './core/sticker-policy.js';
 import { searchPolicy } from '../../../packages/dsh-social-bridge-plugin/search-policy.mjs';
 import {ProactiveEngine} from './core/proactive-engine.js';
 import { ContextMaintenance } from './core/context-maintenance.js';
-import { voiceEnabledFor as isVoiceEnabledFor } from '../../../packages/dsh-voice-plugin/voice-policy.mjs';
+import {HistoryStore} from '../../../packages/dsh-social-bridge-plugin/history-store.mjs';
+import {scopeHistory} from '../../../packages/dsh-social-bridge-plugin/work-modes.mjs';
+import {activeReaderAccount} from '../../../scripts/reader-account-state.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const configPath = path.resolve(process.argv[2] ?? path.join(root, 'config.social.json'));
@@ -29,10 +33,18 @@ if (sendPrivateTest && (allowedGroups.size !== 0 || allowedPrivate.size !== 1)) 
 }
 if (allowedGroups.size + allowedPrivate.size === 0) console.warn('[Social] WeChat whitelist is empty; all messages will be denied');
 const log = (line) => console.log(new Date().toISOString(), line);
+const historyRoot=path.resolve(config.project_root??(config.search_policy_file?path.dirname(path.dirname(config.search_policy_file)):path.resolve(root,'../..')));
+const historyAccount=activeReaderAccount(historyRoot);
+const baseHistoryStore=new HistoryStore(historyRoot,historyAccount.id||historyAccount.legacyId);
+const historyStore=scopeHistory(baseHistoryStore,(_key,row)=>row?.work_mode??'social');
+const historyArchive={backfill:(...args)=>historyStore.backfill(...args),append:(...args)=>{
+  if(activeReaderAccount(historyRoot).id!==historyAccount.id)throw Error('ACCOUNT_SWITCH_REQUIRES_BRIDGE_RESTART');
+  return historyStore.append(...args);
+}};
 const buffer = new MessageBuffer(path.resolve(root, config.message_buffer?.path ?? 'state/social-messages.json'),
-  { maxPerChat: config.message_buffer?.max_messages_per_chat ?? 300 });
+  { maxPerChat: config.message_buffer?.max_messages_per_chat ?? 300,archive:historyArchive });
 const plugin = new DshPluginClient({...config.dsh_plugin,feedback:new AssistantFeedback({root:path.resolve(config.project_root??(config.search_policy_file?path.dirname(path.dirname(config.search_policy_file)):path.resolve(root,'../..')))})}, log);
-import {assistantSenderAllowed,verifiedAssistantSender} from '../../../packages/dsh-social-bridge-plugin/assistant-policy.mjs';
+import {assistantSenderAllowed,assistantGroupChatAllowed,verifiedAssistantSender} from '../../../packages/dsh-social-bridge-plugin/assistant-policy.mjs';
 import {conversationMode,conversationWorkMode} from '../../../packages/dsh-social-bridge-plugin/conversation-policy.mjs';
 const workModeFor=key=>conversationWorkMode(config.search_policy_file?JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat,key);
 const modeFor=key=>conversationMode(config.search_policy_file?JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat,key);
@@ -48,7 +60,8 @@ const personaFor = (key) => socialPersona(config, key, (roleName) => {
   if (!/^[^\\/\0.][^\\/\0]{0,60}$/.test(roleName) || roleName.includes('..')) throw new Error('invalid role name');
   return selectRoleText(fs.readFileSync(path.join(root, 'roles', `${roleName}.md`), 'utf8'), 'v2');
 });
-const engine = new SocialEngine({ buffer, roleFor: key => personaFor(key).persona,
+const connection=new DshConnectionGuard({buffer,probe:()=>plugin.connectionHealth({projectRoot:historyRoot,accountScope:historyAccount.id}),log});
+const engine = new SocialEngine({ buffer,connection, roleFor: key => personaFor(key).persona,
   personaNameFor: key => personaFor(key).personaName,workModeFor,assistantControl:(key,action,message,command)=>plugin.assistantTask(key,action,{...command,senderWxid:verifiedAssistantSender(message)}),assistantAccess:(key,message)=>assistantSenderAllowed((config.search_policy_file?JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat),key,verifiedAssistantSender(message)),
   wakeWords: wechat.wake_words ?? [],
   mode: wechat.wake_mode ?? 'hybrid',modeFor, batchMs: config.social?.batch_ms ?? 3000,
@@ -61,6 +74,8 @@ const engine = new SocialEngine({ buffer, roleFor: key => personaFor(key).person
   searchFor:searchStateFor,
   searchPolicyFor:message=>searchPolicyFor(buildConversationKey(message.platform,message.kind,message.conversation_id)),
   stickerChoicesFor: message=>adapter.stickerChoices({kind:message.kind,target:message.conversation_id,query:message.text}),
+  notebookEnabledFor:key=>pluginEnabled(nativeRoot,'fish-notebook',key),
+  maxTextPartsFor:()=>replyMessageLimit(JSON.parse(fs.readFileSync(path.join(nativeRoot,'config/wechatagent.json'),'utf8').replace(/^\uFEFF/,'' )).wechat),
   stickerPolicyFor: message=>stickerPolicy(config.sticker_policy_file?JSON.parse(fs.readFileSync(config.sticker_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat,buildConversationKey(message.platform,message.kind,message.conversation_id)),
   stickerLabelsFor: (message,ids)=>adapter.stickerLabels({kind:message.kind,target:message.conversation_id,ids}),
   saveStickerLabels: (message,labels)=>adapter.saveStickerLabels({kind:message.kind,target:message.conversation_id,labels}),
@@ -68,26 +83,41 @@ const engine = new SocialEngine({ buffer, roleFor: key => personaFor(key).person
   sendVoice: (message,text,options)=>adapter.sendVoice({kind:message.kind,target:message.conversation_id,text,deliveryId:options?.deliveryId}),
   voiceEnabledFor: key => { try { const current = config.search_policy_file ? JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat : wechat; return isVoiceEnabledFor(current,key); } catch { return false; } },
   send: (message, text, options) => adapter.sendText({ kind: message.kind, target: message.conversation_id, text,deliveryId:options?.deliveryId }), log });
+const memberSettings=()=>config.search_policy_file?JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat;
+const memberHistory=scopeHistory(baseHistoryStore,()=> 'assistant-chat',{fixedMode:'assistant-chat'});
+const memberArchive={backfill:(...args)=>memberHistory.backfill(...args),append:(...args)=>{
+  if(activeReaderAccount(historyRoot).id!==historyAccount.id)throw Error('ACCOUNT_SWITCH_REQUIRES_BRIDGE_RESTART');
+  return memberHistory.append(...args);
+}};
+const memberBuffer=new MessageBuffer(path.join(historyRoot,'state/accounts',historyAccount.id||historyAccount.legacyId||'legacy','assistant-group-chat.json'),{maxPerChat:buffer.maxPerChat,archive:memberArchive});
+const memberConnection=new DshConnectionGuard({buffer:memberBuffer,probe:()=>plugin.connectionHealth({projectRoot:historyRoot,accountScope:historyAccount.id}),log});
+const memberEngine=engine.createGroupChat({buffer:memberBuffer,connection:memberConnection,assistantAccess:(key,message)=>conversationWorkMode(memberSettings(),key)==='assistant'&&assistantGroupChatAllowed(memberSettings(),key,verifiedAssistantSender(message))});
 const proactive=new ProactiveEngine({stateFile:path.resolve(config.proactive_state_file??path.join(root,'state/proactive/state.json')),
   buffer,social:engine,settingsFor:()=>config.proactive_policy_file?JSON.parse(fs.readFileSync(config.proactive_policy_file,'utf8').replace(/^\uFEFF/,'')):{wechat},
   personaFor,decide:(key,prompt,metadata)=>plugin.followup(key,prompt,metadata),
   searchFor:searchStateFor,
   send:(message,text,options)=>adapter.sendText({kind:message.kind,target:message.conversation_id,text,...options}),
-  isReady:()=>adapter.stats.connected&&!!adapter.selfId,selfIdFor:()=>adapter.selfId,log});
+  isReady:()=>connection.ready&&adapter.stats.connected&&!!adapter.selfId,selfIdFor:()=>adapter.selfId,log});
 const contextMaintenance = new ContextMaintenance({ buffer, social: engine,
   settingsFor: () => config.context_policy_file ? JSON.parse(fs.readFileSync(config.context_policy_file, 'utf8').replace(/^\uFEFF/, '')) : { wechat },
   maintain: (key, version) => plugin.maintainContext(key, version),
   proactivePending: key => !!proactive.state.chats[key]?.job,
-  isReady: () => adapter.stats.connected && !!adapter.selfId, log });
+  isReady: () => connection.ready && adapter.stats.connected && !!adapter.selfId, log });
 
-adapter.onMessage((message) => {
+adapter.onMessage(async (message) => {
   try {
     const list = message.kind === 'group' ? allowedGroups : allowedPrivate;
     if (!list.has(String(message.conversation_id))) {
       log(`[WeChat] denied ${message.kind}:${message.conversation_id}`); return;
     }
     log(`[WeChat] accepted ${buildConversationKey(message.platform, message.kind, message.conversation_id)}`);
-    engine.receive(message);
+    const key=buildConversationKey(message.platform,message.kind,message.conversation_id);
+    if(buffer.findIncoming(message)||memberBuffer.findIncoming(message)||message.kind==='group'&&engine.workModeFor(key)==='assistant'&&engine.assistantAllowed(key,message)&&memberHistory.hasIncoming(key,message)){
+      log('[WeChat] '+key+' duplicate_routed_input_ignored');return;
+    }
+    if(message.kind==='group'&&engine.workModeFor(key)==='assistant'&&(!engine.assistantAllowed(key,message)||assistantChatRequest(message,wechat.wake_words??[]))){
+      await memberConnection.check({force:true});memberEngine.receive({...message,assistant_chat_only:true});
+    }else{await connection.check({force:true});engine.receive(message);}
   } catch (error) { log(`[Social] inbound error=${error?.message ?? error}`); }
 });
 adapter.on('open', () => log('[WeChat] OneBot adapter connected'));
@@ -100,24 +130,17 @@ if (sendPrivateTest) adapter.once('open', () => {
     .then(() => log('[WeChat] private test confirmed by server receipt'))
     .catch((error) => log(`[WeChat] private test failed=${error?.message ?? error}`));
 });
+await Promise.all([connection.check({force:true}),memberConnection.check({force:true})]);connection.start();memberConnection.start();
 await adapter.start();
 log(`[Social] reverse OneBot listening on 127.0.0.1:${wechat.onebot?.server?.port ?? 11229}${wechat.onebot?.server?.path ?? '/ws'}`);
 const replayTimer = setInterval(() => {
   for (const key of buffer.keys()) engine.replay(key);
+  for (const key of memberBuffer.keys()) memberEngine.replay(key);
 }, 30000);
-let noticesRunning=false,assistantNoticesStopped=false;
-const assistantNoticeTimer=setInterval(async()=>{if(assistantNoticesStopped||noticesRunning||!adapter.stats.connected||!adapter.selfId)return;noticesRunning=true;try{
-  if(!await plugin.controllerReady())return;
-  const data=await plugin.assistantTask(undefined,'notifications',{localControl:true});
-  for(const notice of data.notifications??[]){if(assistantNoticesStopped)break;const liveWechat=config.search_policy_file?JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat;if(workModeFor(notice.key)!=='assistant'||!assistantSenderAllowed(liveWechat,notice.key,notice.sender))continue;
-    const [platform,kind,target]=notice.key.split(':');if(platform!=='wechat')continue;
-    if(isSilentAssistantNotification(notice)){await plugin.assistantTask(undefined,'notification-ack',{localControl:true,id:notice.id});continue;}
-    let text=notice.text;if(notice.kind==='result'){const parsed=parseSocialDecision(notice.text,{}, {maxChars:12000,allowTextParts:false});text=parsed.decision==='RESPOND'&&!hasReasoningControl(parsed.text)?parsed.text:'定时任务已结束，可发送“任务列表”查看状态或继续任务。';}
-    const receipt=await adapter.sendText({kind,target,text,deliveryId:notice.id});if(receipt?.confirmed===true)await plugin.assistantTask(undefined,'notification-ack',{localControl:true,id:notice.id});
-  }
-}catch(error){log('[Assistant] notification_deferred code='+(error.code??'unavailable'));}finally{noticesRunning=false;}},5000);
+const noticeDelivery=createAssistantNoticeDelivery({adapter,plugin,settingsFor:()=>config.search_policy_file?JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat,isReady:()=>connection.ready,log});
+const assistantNoticeTimer=setInterval(()=>void noticeDelivery.tick(),5000);
 const proactiveTimer=setInterval(()=>void proactive.tick(),60000);void proactive.tick();
 const contextTimer = setInterval(() => void contextMaintenance.tick(), 30000); void contextMaintenance.tick();
-const stop = async () => { clearInterval(contextTimer);contextMaintenance.stop();clearInterval(proactiveTimer);assistantNoticesStopped=true;clearInterval(replayTimer);clearInterval(assistantNoticeTimer); engine.stop(); await adapter.stop(); process.exit(0); };
+const stop = async () => { clearInterval(contextTimer);contextMaintenance.stop();clearInterval(proactiveTimer);noticeDelivery.stop();clearInterval(replayTimer);clearInterval(assistantNoticeTimer); connection.stop();memberConnection.stop();engine.stop();memberEngine.stop(); await adapter.stop(); historyStore.close(); process.exit(0); };
 process.once('SIGINT', () => void stop());
 process.once('SIGTERM', () => void stop());

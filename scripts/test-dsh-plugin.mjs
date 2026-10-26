@@ -27,6 +27,7 @@ async function ready(port, token) {
 
 test('DSH plugin creates one safe session per group and resumes mappings', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'social-plugin-'));
+  fs.cpSync(path.join(root,'packages','dsh-voice-plugin'),path.join(path.dirname(dir),'dsh-voice-plugin'),{recursive:true});
   const packageDir = path.join(dir, 'node_modules', '@deepseek-ai', 'dsh-llm');
   fs.mkdirSync(packageDir, { recursive: true });
   fs.writeFileSync(path.join(packageDir, 'package.json'), '{"type":"module","exports":"./index.js"}');
@@ -37,8 +38,9 @@ test('DSH plugin creates one safe session per group and resumes mappings', async
   fs.copyFileSync(path.join(root, 'packages', 'dsh-social-bridge-plugin', 'deadline.mjs'), path.join(dir, 'deadline.mjs'));
   fs.copyFileSync(path.join(root, 'packages', 'dsh-social-bridge-plugin', 'session-groups.mjs'), path.join(dir, 'session-groups.mjs'));
   fs.copyFileSync(path.join(root, 'packages', 'dsh-social-bridge-plugin', 'local-policy.mjs'), path.join(dir, 'local-policy.mjs'));
-  for(const name of ['assistant-notifications.mjs','assistant-tasks.mjs','assistant-control.mjs','social-tool-restrict.mjs','plugin-catalog.mjs','work-modes.mjs'])fs.copyFileSync(path.join(root,'packages/dsh-social-bridge-plugin',name),path.join(dir,name));
-  for(const name of ['prompt-context.mjs','member-memory.mjs','member-memory-policy.mjs','meme-library.mjs','meme-library-policy.mjs','model-search.mjs','dsh-access.mjs','file-tools.mjs','file-transfers.mjs','assistant-policy.mjs','conversation-policy.mjs','dsh-bundled.mjs','sticker-pool-review.mjs','dsh-migration.mjs','dsh-search.mjs','search-provider.mjs','search-budget.mjs','search-policy.mjs','weather-query.mjs','weather-source.mjs','social-tool-policy.mjs','context-policy.mjs'])fs.copyFileSync(path.join(root,'packages','dsh-social-bridge-plugin',name),path.join(dir,name));
+  for(const name of ['fish-notebook.mjs','fish-notebook-policy.mjs','fish-notebook-store.mjs','memory-summary.mjs','reply-layout-policy.mjs','assistant-notifications.mjs','assistant-tasks.mjs','assistant-control.mjs','social-tool-restrict.mjs','plugin-catalog.mjs','work-modes.mjs'])fs.copyFileSync(path.join(root,'packages/dsh-social-bridge-plugin',name),path.join(dir,name));
+  fs.writeFileSync(path.join(dir,'assistant-feedback.mjs'),fs.readFileSync(path.join(root,'packages/dsh-social-bridge-plugin/assistant-feedback.mjs'),'utf8').replace("'../../scripts/reader-account-state.mjs'",JSON.stringify(pathToFileURL(path.join(root,'scripts/reader-account-state.mjs')).href)));
+  for(const name of ['prompt-context.mjs','member-memory.mjs','member-memory-policy.mjs','meme-library.mjs','meme-library-policy.mjs','model-search.mjs','dsh-access.mjs','file-tools.mjs','file-transfers.mjs','assistant-policy.mjs','conversation-policy.mjs','dsh-bundled.mjs','sticker-pool-review.mjs','dsh-migration.mjs','dsh-search.mjs','search-provider.mjs','search-budget.mjs','search-policy.mjs','weather-query.mjs','weather-source.mjs','social-tool-policy.mjs','context-policy.mjs','history-policy.mjs','history-store.mjs','history-runtime.mjs','usage-summary.mjs','request-window.mjs'])fs.copyFileSync(path.join(root,'packages','dsh-social-bridge-plugin',name),path.join(dir,name));
   for(const name of ['web-reader.mjs','web-reader-policy.mjs','web-reader-fetch.mjs','web-reader-content.mjs','web-reader-zxsj.mjs'])fs.copyFileSync(path.join(root,'packages/dsh-social-bridge-plugin',name),path.join(dir,name));
   fs.cpSync(path.join(root,'packages/dsh-social-bridge-plugin/skills'),path.join(dir,'skills'),{recursive:true});
   for(const name of ['htmlparser2','entities','domhandler','domutils','dom-serializer','domelementtype'])fs.cpSync(path.join(root,'packages/dsh-social-bridge-plugin/node_modules',name),path.join(dir,'node_modules',name),{recursive:true});

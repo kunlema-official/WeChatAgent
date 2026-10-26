@@ -120,3 +120,10 @@ Thumbs.db
 # Private extension permissions, scope and settings
 /config/extensions.json
 /config/extensions.pre-*
+
+# User-installed WeChatAgent plugins and private grants/settings
+/plugins/
+/config/plugins.json
+
+# Verified first-party plugin included in the source release
+!/optional-extensions/packages/fish-notebook-1.0.0.zip

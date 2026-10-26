@@ -10,6 +10,7 @@ import {DSH_ACCESS_POLICY} from './dsh-access.mjs';
 import {WEB_READER_POLICY} from './web-reader-policy.mjs';
 import {MEME_LIBRARY_POLICY} from './meme-library-policy.mjs';
 import {MEMBER_MEMORY_POLICY} from './member-memory-policy.mjs';
+import {HISTORY_POLICY} from './history-policy.mjs';
 export const MODEL_SEARCH_TOOL='wechat_web_search';
 export const MODEL_SEARCH_POLICY=Symbol.for('wechatagent.model-search.v1');
 const clip=(text,size)=>Array.from(String(text??'')).slice(0,size).join('');
@@ -25,7 +26,9 @@ export function localSearchPolicy(root,key){
 export function createModelSearchTurn({webTurn,optOut=false,privateNames=[],prefetchedSearches=0}={}){
   return {webTurn,optOut:optOut===true,privateNames:Array.isArray(privateNames)?privateNames.filter(name=>typeof name==='string'&&name.length>=2&&name.length<=80).slice(0,50):[],calls:Math.min(3,Math.max(0,prefetchedSearches)),toolCalls:0,used:new Map(),controller:webTurn?.controller??new AbortController()};
 }
-export function modelSearchInstructions(root,key,turn){return turn&&!turn.optOut&&localSearchPolicy(root,key)?'[内置拓展 联网搜索]\n'+instructions:'';}
+// Stable guidance follows owner configuration; per-turn opt-out is still
+// enforced by tool visibility/execution and the current chat's explicit notice.
+export function modelSearchInstructions(root,key,turn,{stable=false}={}){return turn&&(stable||!turn.optOut)&&localSearchPolicy(root,key)?'[内置拓展 联网搜索]\n'+(stable?'以下说明仅在本轮允许联网且实际提供工具时适用；禁网时不调用。\n':'')+instructions:'';}
 export function normalizeSearchQuery(value,privateNames=[]){
   if(typeof value!=='string'||/[\u0000-\u001f\u007f<>]/.test(value))throw Error('搜索只接受简短公开主题关键词。');
   const query=value.normalize('NFKC').replace(/\s+/g,' ').trim();
@@ -91,7 +94,7 @@ export function bindModelSearch(agentCtx,root,key,turnFor,{nativeSearch,log=()=>
 export function refreshSearchToolBaseline(agentCtx,session,turn){
   if(!turn||turn.baselineEstablished||typeof session.requestHeader!=='function')return false;
   const previous=session.requestHeader();if(!previous?.config)return false;
-  const policies=[MODEL_SEARCH_POLICY,WEB_READER_POLICY,DSH_ACCESS_POLICY,FILE_TRANSFER_POLICY,MEME_LIBRARY_POLICY,MEMBER_MEMORY_POLICY,Symbol.for('wechatagent.extension-tools.v1')].map(symbol=>agentCtx[symbol]).filter(Boolean);
+  const policies=[MODEL_SEARCH_POLICY,WEB_READER_POLICY,DSH_ACCESS_POLICY,FILE_TRANSFER_POLICY,MEME_LIBRARY_POLICY,MEMBER_MEMORY_POLICY,HISTORY_POLICY,Symbol.for('wechatagent.extension-tools.v1')].map(symbol=>agentCtx[symbol]).filter(Boolean);
   const allowed=new Set(policies.flatMap(policy=>[...policy.names()]));
   const definitions=new Map();
   for(const policy of policies)for(const tool of policy.definitions?.()??[])if(allowed.has(tool.name))definitions.set(tool.name,{name:tool.name,description:tool.description,parameters:structuredClone(tool.parameters)});

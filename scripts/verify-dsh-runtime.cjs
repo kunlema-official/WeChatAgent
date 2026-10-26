@@ -59,11 +59,32 @@ const { pathToFileURL } = require('node:url');
       async resolveModel(provider,id) { return {provider,id,name:id,inputModalities:['text','image'],contextWindow:65536,maxOutputTokens:4096,toolUpdate:'in-history'}; }
       async *stream(options) {
         calls.push(options);
+        let output='SILENT';
+        if(options.messages.at(-1)?.source?.kind==='wechat-history-summary'){
+          const text=options.messages.at(-1).content[0].text,packet=JSON.parse(text.slice(text.lastIndexOf('\n')+1));output=packet.records.map(r=>r.speaker+'：'+r.text.slice(0,60)+' [#'+r.id+']').join('\n').slice(0,3000);
+        }
         if(failVision&&options.messages.some(message=>message.content?.some(block=>block.type==='image')))throw new sdk.LlmError('Offline fixture rejects this image','INVALID_REQUEST');
         if(options.tools?.length && options.tools.every(tool=>tool.deferLoading===true))throw new sdk.LlmError('tools: at least one tool must have defer_loading=false. All tools cannot be deferred.','INVALID_REQUEST');
+        const wantsHistory=options.messages.some(m=>m.role==='user'&&m.content?.some(b=>b.type==='text'&&b.text.includes('WINDOW_HISTORY_LOOKUP')));
+        const wantsBatch=options.messages.some(m=>m.role==='user'&&m.content?.some(b=>b.type==='text'&&b.text.includes('WINDOW_BATCHED_HISTORY')));
+        if(wantsBatch){
+          const evidence=options.messages.filter(m=>m.role==='tool');
+          if(evidence.length<2){
+            const previous=evidence.length?JSON.parse(evidence[0].content[0].text.split('\n')[0]):null;
+            if(previous){assert.equal(previous.budget.remaining,1);assert(previous.matches.length);assert(evidence[0].content[0].text.includes('最终输出 RESPOND:'));}
+            const block={type:'tool-call',id:'batch-history-'+evidence.length,name:'wechat_history_search',arguments:JSON.stringify(previous?{mode:'message',messageId:previous.matches[0].id,context:1}:{queries:['DISPLAY_ONLY_SECRET','兰亭书店']})};
+            yield {type:'block-start',index:0,blockType:'tool-call'};yield {type:'block-end',index:0,block};yield {type:'usage',usage:{inputTokens:100,cacheReadTokens:50,outputTokens:10}};yield {type:'finish',reason:{kind:'stop'}};return;
+          }
+          const expanded=JSON.parse(evidence[1].content[0].text.split('\n')[0]);assert.equal(expanded.budget.remaining,0);assert(!expanded.error);output='RESPOND: 旧事已核对。';
+        }
+        if(wantsHistory&&!options.messages.some(m=>m.role==='tool')){
+          const block={type:'tool-call',id:'window-history-call',name:'wechat_history_search',arguments:JSON.stringify({query:'DISPLAY_ONLY_SECRET'})};
+          yield {type:'block-start',index:0,blockType:'tool-call'};yield {type:'block-end',index:0,block};yield {type:'usage',usage:{inputTokens:100,cacheReadTokens:50,outputTokens:10}};yield {type:'finish',reason:{kind:'stop'}};return;
+        }
         yield {type:'block-start',index:0,blockType:'text'};
-        yield {type:'text-delta',index:0,text:'SILENT'};
-        yield {type:'block-end',index:0,block:{type:'text',text:'SILENT'}};
+        yield {type:'text-delta',index:0,text:output};
+        yield {type:'block-end',index:0,block:{type:'text',text:output}};
+        yield {type:'usage',usage:{inputTokens:100,cacheReadTokens:50,outputTokens:10}};
         yield {type:'finish',reason:{kind:'stop'}};
       }
     }
@@ -188,7 +209,164 @@ const { pathToFileURL } = require('node:url');
     assert.equal(workspaceResumed.sessionId,workspaceMoved.sessionId);
     assert.equal((await rpc('/sessions')).sessions.find(item=>item.conversationKey===workspaceIdentity.conversationKey).groupId,targetGroup.id);
     assert(JSON.stringify(calls.at(-1).messages).includes('workspace-42'));
-    const result={dshVersion:actualVersion,realRuntime:true,model:'offline fixture adapter',workspaceCreation:true,workspaceHistoryMove:true,workspaceMoveNoModelCall:true,workspaceMovePersistedResume:true,workspaceOriginalArchived:true,sessionCreation:true,followup:true,persistedResume:true,emptySessionExtensionAdmission:true,extensionSessionPersistedResume:true,missingHeadAutoRecovery:true,damagedHistoryPreserved:true,imageAttachment:true,imageOffload:true,nativeCompaction:true,emptyTools:true,lateScopedToolIsolation:true,deferredOnlyFailureReproduced:true,legacyToolHistoryRecovered:true,codingToolsUnaffected:true,peerCompatibility:true,wechatMessagesSent:0};
+    // Exercise bounded generations in the real 0.2 runtime, including a paid-call-free social summary fixture.
+    const historyKey='wechat:private:987',historyIdentity={...identity,conversationKey:historyKey,conversationName:'有界记忆验收'};
+    fs.writeFileSync(path.join(fixture,'config/wechatagent.json'),JSON.stringify({wechat:{whitelist:{private:['987'],groups:[]},history:{enabled:true,maxSessionTurns:4,recentMessages:4}}}));
+    const historyRows=Array.from({length:12},(_,i)=>({id:'history-'+i,platform:'wechat',kind:'private',conversation_id:'987',message_id:String(i),sender_id:'987',sender_name:'测试好友',text:i===0?'去年苏州桂花面的约定':'近期原文 '+i,timestamp:Date.now()/1000-600+i,processed:true}));
+    fs.writeFileSync(path.join(fixture,'state/social-messages.json'),JSON.stringify({version:1,chats:{[historyKey]:historyRows},pendingReplies:{}}));
+    const historyFirst=await rpc('/followup',{...historyIdentity,message:'有界记忆第一轮，只输出 SILENT。'});
+    for(let i=1;i<4;i++)await rpc('/followup',{...historyIdentity,message:'有界记忆继续 '+i+'，只输出 SILENT。'});
+    const oldHistoryAgent=ctx.agents.get(historyFirst.sessionId),oldHistoryEvents=structuredClone(oldHistoryAgent.session.snapshotEvents()),oldHistoryPath=fs.readdirSync(path.join(home,'sessions'),{recursive:true}).map(name=>path.join(home,'sessions',name)).find(file=>file.includes(oldHistoryAgent.session.id+path.sep)&&file.endsWith('session.v4.jsonl.zstd')),oldHistoryHash=crypto.createHash('sha256').update(fs.readFileSync(oldHistoryPath)).digest('hex');
+    const historyNext=await rpc('/followup',{...historyIdentity,message:'跨代续聊，只输出 SILENT。',batchId:'f'.repeat(64)});
+    assert.notEqual(historyNext.sessionId,historyFirst.sessionId);assert(!ctx.agents.get(historyFirst.sessionId));
+    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(oldHistoryPath)).digest('hex'),oldHistoryHash);
+    assert(JSON.stringify(calls.at(-1).messages).includes('近期原文 11'));assert(JSON.stringify(calls.at(-1).messages).includes('去年苏州桂花面的约定'));
+    const historyAgent=ctx.agents.get(historyNext.sessionId),historyBeforeCache=calls.length;
+    assert.equal((await rpc('/followup',{...historyIdentity,message:'跨代续聊，只输出 SILENT。',batchId:'f'.repeat(64)})).cached,true);assert.equal(calls.length,historyBeforeCache);
+    assert.equal(historyAgent.session.snapshotEvents().filter(e=>e.data.source?.socialMemorySeed).length,1);
+    const {HistoryStore}=await import(pathToFileURL(path.join(plugin,'history-store.mjs')).href);const historyStore=new HistoryStore(fixture);
+    assert(historyStore.search(historyKey,'桂花面').length);assert(historyStore.checkpoint(historyKey));assert.equal(historyStore.db.prepare('SELECT count(*) n FROM native_events WHERE session=?').get(historyFirst.sessionId).n,oldHistoryEvents.length);historyStore.close();
+    await ctx.fiber.dispose();ctx=undefined;ctx=await boot.boot('Bounded history restart',configFile,[],undefined,pathToFileURL(path.join(source,'resources/app.asar/dsh/package.json')).href);ctx.llm.registerAdapter(['offline-test'],new Adapter());
+    assert.equal((await rpc('/followup',{...historyIdentity,message:'跨代重启恢复，只输出 SILENT。'})).sessionId,historyNext.sessionId);
+    // A stable visible Session with a freshly bounded request on every turn.
+    const windowConfig={wechat:{whitelist:{private:['987'],groups:[]},history:{enabled:true,mode:'window',recentMessages:4,recentChars:2000,maxSessionTurns:4,maxSessionEvents:100,maxContextTokens:8000}}};
+    fs.writeFileSync(path.join(fixture,'config/wechatagent.json'),JSON.stringify(windowConfig));
+    const archive=new HistoryStore(fixture);archive.append(historyKey,{id:'ancient-display',message_id:'ancient-display',sender_id:'987',sender_name:'测试好友',text:'DISPLAY_ONLY_SECRET: 周五去过兰亭书店',timestamp:Date.now()/1000-10000});archive.close();
+    const visibleId=historyNext.sessionId,visibleAgent=ctx.agents.get(visibleId),beforeWindow=structuredClone(visibleAgent.session.snapshotEvents());
+    const firstWindow=await rpc('/followup',{...historyIdentity,message:'WINDOW_NEW_MESSAGE 只输出 SILENT。'});assert.equal(firstWindow.sessionId,visibleId);
+    assert(!JSON.stringify(calls.at(-1).messages).includes('DISPLAY_ONLY_SECRET'));assert(!JSON.stringify(calls.at(-1).messages).includes('去年苏州桂花面的约定'));assert(JSON.stringify(calls.at(-1).messages).includes('近期原文 11'));
+    assert(!calls.at(-1).messages.some(m=>m.source?.socialMemorySeed||m.source?.socialDisplayOnly));
+    const visibleEvents=visibleAgent.session.snapshotEvents();assert.deepEqual(visibleEvents.slice(0,beforeWindow.length),beforeWindow);
+    assert(visibleEvents.some(e=>e.surfaceOp==='append'&&e.data.source?.socialDisplayOnly&&JSON.stringify(e.data).includes('DISPLAY_ONLY_SECRET')));
+    const cacheTools=['z_cache_probe','a_cache_probe'].map(name=>({name,description:'offline cache-order fixture',parameters:{type:'object',properties:{}},output:{schema:{type:'object'},render:()=>[]},execute:async()=>({})}));
+    Object.defineProperty(visibleAgent.ctx,Symbol.for('wechatagent.extension-tools.v1'),{configurable:true,value:{names:()=>new Set(cacheTools.map(t=>t.name)),check:name=>cacheTools.some(t=>t.name===name)}});
+    let cacheDisposers=[],fixedPrefix,stableToolSchema;
+    for(let i=0;i<12;i++){
+      cacheDisposers.forEach(dispose=>dispose());cacheDisposers=(i%2?[...cacheTools].reverse():cacheTools).map(tool=>visibleAgent.ctx.tools.register(tool));
+      assert.equal((await rpc('/followup',{...historyIdentity,message:'WINDOW_ROUND_'+i+' 只输出 SILENT。'})).sessionId,visibleId);
+      const call=calls.at(-1),tools=call.tools.map(tool=>tool.name);assert.deepEqual(tools,[...tools].sort());assert(tools.includes('a_cache_probe')&&tools.includes('z_cache_probe'));
+      const schema=JSON.stringify(call.tools);if(stableToolSchema)assert.equal(schema,stableToolSchema);stableToolSchema=schema;
+      const input=call.messages.find(message=>message.source?.socialInputWindow),source=input.source.socialInputWindow;
+      assert.equal(source.prefixPlacement,'native-system');
+      const prefix=call.messages[0].content.map(block=>block.text??'').join('');assert.equal(call.messages[0].role,'system');assert(prefix.includes('WeChatAgent 当前人格与规则：'));assert(!input.content[0].text.includes('WeChatAgent 当前人格与规则：'));
+      if(fixedPrefix)assert.equal(prefix,fixedPrefix);fixedPrefix=prefix;
+      const lastUser=call.messages.findLast(message=>message.role==='user');assert(JSON.stringify(lastUser).includes('本机发送要求：最终输出 RESPOND: 正文 或 SILENT'));
+    }
+    cacheDisposers.forEach(dispose=>dispose());delete visibleAgent.ctx[Symbol.for('wechatagent.extension-tools.v1')];
+    const echoText='CONFIRMED_DEDUP_SENTINEL 这是已经确认发送的回复。';
+    const echoArchive=new HistoryStore(fixture);echoArchive.append(historyKey,{id:'confirmed-echo',message_id:'confirmed-echo',sender_id:'987',sender_name:'AI',outgoing:true,delivery_status:'confirmed',text:echoText,timestamp:Date.now()/1000});echoArchive.close();
+    const {buildPrivatePrompt}=await import(pathToFileURL(path.join(project,'components/qq-bridge/src/core/social-engine.js')).href);
+    const echoPrompt=buildPrivatePrompt({key:historyKey,rows:[{sender_id:'987',text:'WINDOW_DEDUP_CURRENT_MESSAGE',timestamp:Date.now()/1000}],previousReply:{text:echoText,delivery_status:'confirmed'}});
+    await rpc('/followup',{...historyIdentity,message:echoPrompt,batchId:'c'.repeat(64)});
+    const echoCall=calls.at(-1),echoInput=echoCall.messages.findLast(message=>message.source?.socialWindowReplyDedup);
+    assert(echoInput);assert(echoInput.source.socialWindowReplyDedup>0);assert(!echoInput.content[0].text.includes('<previous_reply>'));assert(JSON.stringify(echoCall.messages).includes('WINDOW_DEDUP_CURRENT_MESSAGE'));assert.equal(JSON.stringify(echoCall.messages).split(echoText).length-1,1);
+    const echoStatus=(await rpc('/sessions')).sessions.find(s=>s.sessionId===visibleId);assert(echoStatus.history.request.duplicateReplyCharsRemoved>0);
+    console.log(JSON.stringify({confirmedWindowReplyDedup:true,canonicalReplyStillInWindow:true,currentInputPreserved:true}));
+    console.log(JSON.stringify({stableToolSchemaAcrossRegistrationOrder:true,fixedPersonaPrefixAcrossTurns:true,hostOutputContractOutsideChat:true}));
+    assert(!JSON.stringify(calls.at(-1).messages).includes('WINDOW_ROUND_0'));assert(!ctx.workspaceRegistry.archivedSessionIds.includes(visibleId));
+    const toolStart=calls.length;await rpc('/followup',{...historyIdentity,message:'WINDOW_HISTORY_LOOKUP 查询旧事，只输出 SILENT。'});
+    const toolCalls=calls.slice(toolStart);assert.equal(toolCalls.length,2);assert(toolCalls[0].tools.some(t=>t.name==='wechat_history_search'));
+    assert(!toolCalls[0].messages.some(m=>m.role==='tool'));assert(toolCalls[1].messages.some(m=>m.role==='tool'&&JSON.stringify(m).includes('DISPLAY_ONLY_SECRET')));
+    const batchStart=calls.length;const batchReply=await rpc('/followup',{...historyIdentity,message:'WINDOW_BATCHED_HISTORY 查询并展开旧事。'});
+    assert.equal(batchReply.text,'RESPOND: 旧事已核对。');assert.equal(calls.length-batchStart,3);
+    const batchRequests=calls.slice(batchStart);assert(batchRequests.every(call=>JSON.stringify(call.tools)===JSON.stringify(batchRequests[0].tools)),'Budget notes must not change the tool schema between continuation steps');
+    const metered=(await rpc('/sessions')).sessions.find(s=>s.sessionId===visibleId).usage;assert(metered.recent.calls>0);assert(metered.cumulative.P>=metered.recent.P);assert.equal(metered.latest.calls,1);
+    console.log(JSON.stringify({batchedHistoryLookup:true,historyExpansionBudgetPreserved:true,historyToolReplyContract:true,usageRecentAndCumulative:true}));
+    await rpc('/followup',{...historyIdentity,message:'WINDOW_AFTER_LOOKUP 只输出 SILENT。'});assert(!JSON.stringify(calls.at(-1).messages).includes('DISPLAY_ONLY_SECRET'));
+    const displayPages=visibleAgent.session.snapshotEvents().filter(e=>e.data.source?.socialDisplayOnly).length;
+    const cachedWindow='a'.repeat(64);await rpc('/followup',{...historyIdentity,message:'WINDOW_CACHED 只输出 SILENT。',batchId:cachedWindow});const beforeWindowCache=calls.length;
+    assert.equal((await rpc('/followup',{...historyIdentity,message:'WINDOW_CACHED 只输出 SILENT。',batchId:cachedWindow})).cached,true);assert.equal(calls.length,beforeWindowCache);
+    await ctx.fiber.dispose();ctx=undefined;ctx=await boot.boot('Window history restart',configFile,[],undefined,pathToFileURL(path.join(source,'resources/app.asar/dsh/package.json')).href);ctx.llm.registerAdapter(['offline-test'],new Adapter());
+    assert.equal((await rpc('/followup',{...historyIdentity,message:'WINDOW_RESTART 只输出 SILENT。'})).sessionId,visibleId);
+    const restartedWindow=ctx.agents.get(visibleId).session;assert.equal(restartedWindow.snapshotEvents().filter(e=>e.data.source?.socialDisplayOnly).length,displayPages);assert(!JSON.stringify(calls.at(-1).messages).includes('DISPLAY_ONLY_SECRET'));
+    assert(restartedWindow.snapshotEvents().some(e=>e.surfaceOp==='append'&&JSON.stringify(e.data).includes('WINDOW_ROUND_0')));
+    const interactionId='b'.repeat(64);await rpc('/followup',{...historyIdentity,message:'WINDOW_REPAIR_ORIGINAL_CONTEXT 只输出 SILENT。',batchId:interactionId});
+    await rpc('/followup',{...historyIdentity,message:'本机发送格式校正：上一轮为空，仅修正发送格式。',batchId:crypto.createHash('sha256').update(interactionId+'\0format-repair-v4').digest('hex')});
+    assert(JSON.stringify(calls.at(-1).messages).includes('WINDOW_REPAIR_ORIGINAL_CONTEXT'));
+    await rpc('/followup',{...historyIdentity,message:'WINDOW_AFTER_REPAIR 只输出 SILENT。'});assert(!JSON.stringify(calls.at(-1).messages).includes('WINDOW_REPAIR_ORIGINAL_CONTEXT'));
+    // Append only canonical evidence; keep drafts and old tool chains out.
+    windowConfig.wechat.history.windowStrategy='append';fs.writeFileSync(path.join(fixture,'config/wechatagent.json'),JSON.stringify(windowConfig));
+    let appendReuses=0,appendRotations=0;
+    for(let i=0;i<14;i++){
+      const appendArchive=new HistoryStore(fixture);appendArchive.append(historyKey,{id:'append-'+i,message_id:'append-'+i,sender_id:'987',sender_name:'测试好友',text:'CANONICAL_APPEND_'+i,timestamp:Date.now()/1000+i});appendArchive.close();
+      await rpc('/followup',{...historyIdentity,message:'APPEND_CURRENT_'+i+' 只输出 SILENT。'});
+      const call=calls.at(-1),input=call.messages.find(m=>m.source?.socialInputWindow),meta=input.source.socialInputWindow;
+      assert.equal(meta.strategy,'bounded-append-v1');assert(meta.recentRecords<=8);assert.equal(meta.maxRecords,8);
+      assert(input.content[0].text.includes('CANONICAL_APPEND_'+i));assert(!JSON.stringify(call.messages).includes('WINDOW_REPAIR_ORIGINAL_CONTEXT'));assert(!call.messages.some(m=>m.role==='tool'));
+      if(meta.reused)appendReuses++;if(meta.resetReason==='count')appendRotations++;
+    }
+    assert(appendReuses>0);assert(appendRotations>0);
+    const lastAppend=calls.at(-1).messages.find(m=>m.source?.socialInputWindow).content[0].text;
+    await ctx.fiber.dispose();ctx=undefined;ctx=await boot.boot('Append window restart',configFile,[],undefined,pathToFileURL(path.join(source,'resources/app.asar/dsh/package.json')).href);ctx.llm.registerAdapter(['offline-test'],new Adapter());
+    await rpc('/followup',{...historyIdentity,message:'APPEND_RESTART 只输出 SILENT。'});
+    const resumedAppend=calls.at(-1).messages.find(m=>m.source?.socialInputWindow);assert.equal(resumedAppend.content[0].text,lastAppend);assert(resumedAppend.source.socialInputWindow.reused);
+    const appendStatus=(await rpc('/sessions')).sessions.find(s=>s.sessionId===visibleId).history.request;assert.equal(appendStatus.strategy,'bounded-append-v1');assert(appendStatus.reused);
+    console.log(JSON.stringify({boundedAppend:true,appendReuses,appendRotations,appendPersistedResume:true,appendNoDraftsOrToolHistory:true}));
+    const stableWindowBefore=calls.at(-1).messages.find(m=>m.source?.socialInputWindow).content[0].text;
+    const tailStart=calls.length,tailBatch='d'.repeat(64);
+    await rpc('/followup',{...historyIdentity,message:'看看 https://example.com/fixture 只输出 SILENT。',batchId:tailBatch});
+    const withTail=calls.at(-1),tail=withTail.messages.find(m=>m.source?.socialWindowTail),head=withTail.messages.find(m=>m.source?.socialInputWindow);
+    assert(tail&&tail.content[0].text.includes('内置技能'));assert.equal(head.content[0].text,stableWindowBefore);assert(withTail.messages.indexOf(tail)>withTail.messages.indexOf(head));
+    assert.equal(head.source.socialInputWindow.layout,'stable-window-tail-v2');
+    assert(withTail.messages.at(-1).source.socialBatchId===tailBatch);assert(withTail.messages.at(-1).content[0].text.includes('最终输出 RESPOND:'));
+    await rpc('/followup',{...historyIdentity,message:'本机发送格式校正：保持刚才的原意。',batchId:crypto.createHash('sha256').update(tailBatch+'\0format-repair-v4').digest('hex')});
+    assert(calls.at(-1).messages.some(m=>m.source?.socialFormatRepair));assert(JSON.stringify(calls.at(-1).messages).includes('https://example.com/fixture'));
+    await rpc('/followup',{...historyIdentity,message:'接着聊刚才那件事，只输出 SILENT。'});
+    assert(!calls.at(-1).messages.some(m=>m.source?.socialWindowTail),'Expired webpage instructions must leave the next interaction');
+    assert(!JSON.stringify(calls.at(-1).messages).includes('https://example.com/fixture'));
+    assert.equal(calls.length-tailStart,3,'Context maintenance must not introduce model calls');
+    const cacheStatus=(await rpc('/sessions')).sessions.find(s=>s.sessionId===visibleId).history;
+    assert(cacheStatus.requests.length<=20);assert(cacheStatus.requests.some(r=>r.tailChars>0));assert(cacheStatus.requests.every(r=>r.usage?.U===100&&r.usage?.R===50));assert(cacheStatus.requests.at(-1).changedParts.includes('tail'));
+    assert(!JSON.stringify(cacheStatus.requests).includes('example.com'),'Diagnostics must not expose raw input');
+    console.log(JSON.stringify({separateDynamicTail:true,stableWindowUnchangedByWebpage:true,expiredTailRemoved:true,requestUsageLinked:true,noMaintenanceModelCalls:true}));
+    const manualWindowCount=calls.length;assert.equal((await rpc('/compact',{conversationKey:historyKey})).sessionId,visibleId);assert.equal(ctx.agents.get(visibleId).session.id,visibleId);
+    // Each owner persona is registered in that agent's system scope, including
+    // literal template-looking text. Other social and coding scopes stay separate.
+    const alternateKey='wechat:private:986',alternatePersona='这是其他聊天的独立人格 {{literal_fixture}}，只回复 SILENT。';
+    windowConfig.wechat.whitelist.private.push('986');fs.writeFileSync(path.join(fixture,'config/wechatagent.json'),JSON.stringify(windowConfig));
+    const roleFile=path.join(fixture,'state/bridge-config.json'),roleConfig=JSON.parse(fs.readFileSync(roleFile,'utf8'));
+    roleConfig.roles[alternateKey]={name:'独立前缀',persona:alternatePersona};fs.writeFileSync(roleFile,JSON.stringify(roleConfig));
+    await rpc('/followup',{conversationKey:alternateKey,personaName:'独立前缀',persona:alternatePersona,message:'独立系统前缀验收'});
+    const alternateSystem=calls.at(-1).messages[0].content.map(b=>b.text??'').join('');assert(alternateSystem.includes(alternatePersona));assert(!alternateSystem.includes('WeChatAgent 当前人格与规则：\n'+historyIdentity.persona));
+    await rpc('/followup',{...historyIdentity,message:'原聊天的系统前缀继续'});assert(!JSON.stringify(calls.at(-1).messages).includes(alternatePersona));
+    console.log(JSON.stringify({nativeSystemPrefix:true,personaAbsentFromDynamicWindow:true,nativePrefixScopeIsolation:true,literalPersonaPreserved:true}));
+    {
+    const searchKey='wechat:private:985',searchIdentity={...historyIdentity,conversationKey:searchKey,conversationName:'首次搜索顺序验收'};
+    const {SEARCH_DEFAULTS}=await import(pathToFileURL(path.join(plugin,'search-policy.mjs')).href);
+    const {WebSearch}=await import(pathToFileURL(path.join(project,'components/qq-bridge/src/core/web-search.js')).href);
+    windowConfig.wechat.whitelist.private.push('985');windowConfig.wechat.search={...SEARCH_DEFAULTS,enabled:true};fs.writeFileSync(path.join(fixture,'config/wechatagent.json'),JSON.stringify(windowConfig));
+    const searchService=new WebSearch({configFile:path.join(fixture,'config/wechatagent.json'),stateFile:path.join(fixture,'state/search/state.json'),fetchImpl:async()=>new Response('<rss><channel><item><title>书店营业时间</title><link>https://docs.example.org/</link><description>OFFLINE_PREFETCH_SOURCE 书店营业时间来源摘要</description></item></channel></rss>')});
+    const prefetched=await searchService.prepare(searchKey,[{text:'帮我搜索书店营业时间'}],'fresh-search-order');assert.equal(prefetched.status,'ready');
+    readerConversationKey=searchKey;const countBeforePrefetch=calls.length;
+    await rpc('/followup',{...searchIdentity,message:'看看 https://example.com/fixture 只输出 SILENT。',searchTicket:prefetched.id,searchContext:prefetched.context,batchId:'e'.repeat(64),images:[{id:imageId}]});
+    const prefetchedCall=calls.at(-1),windowIndex=prefetchedCall.messages.findIndex(m=>m.source?.socialInputWindow),tailIndex=prefetchedCall.messages.findIndex(m=>m.source?.socialWindowTail),searchIndex=prefetchedCall.messages.findIndex(m=>m.source?.socialSearch),currentIndex=prefetchedCall.messages.findIndex(m=>m.source?.socialBatchId==='e'.repeat(64));
+    assert(windowIndex>0);assert(tailIndex>windowIndex);assert(searchIndex>tailIndex);assert(currentIndex>searchIndex);assert(prefetchedCall.messages[currentIndex].content.some(b=>b.type==='image'));assert.deepEqual(prefetchedCall.messages[currentIndex].source.socialImageIds,[imageId]);assert.equal(calls.length,countBeforePrefetch+1);
+    await rpc('/followup',{...searchIdentity,message:'普通的后续消息，只输出 SILENT。'});assert(!JSON.stringify(calls.at(-1).messages).includes('OFFLINE_PREFETCH_SOURCE'));
+    console.log(JSON.stringify({freshPrefetchAfterStableWindow:true,prefetchBeforeCurrentMessage:true,prefetchImagePreserved:true,prefetchRetiredOnNextInteraction:true,noExtraModelCalls:true}));
+    }
+    {
+      const {wakeContextHint}=await import(pathToFileURL(path.join(plugin,'request-window.mjs')).href);
+      const {buildSocialPrompt}=await import(pathToFileURL(path.join(project,'components/qq-bridge/src/core/social-engine.js')).href);
+      windowConfig.wechat.whitelist.groups.push('984','983');windowConfig.wechat.history.coldWakeMinutes=30;fs.writeFileSync(path.join(fixture,'config/wechatagent.json'),JSON.stringify(windowConfig));
+      const at=Math.floor(Date.now()/1000),coldKey='wechat:group:984',memoryKey='wechat:group:983';
+      const roles=JSON.parse(fs.readFileSync(roleFile,'utf8'));for(const key of [coldKey,memoryKey])roles.roles[key]={name:historyIdentity.personaName,persona:historyIdentity.persona};fs.writeFileSync(roleFile,JSON.stringify(roles));
+      const old=Array.from({length:12},(_,i)=>({id:'cold-original-'+i,platform:'wechat',kind:'group',conversation_id:'984',sender_id:'42',sender_name:'群友',timestamp:at-4000+i,text:'COLD_ARCHIVE_OLD_'+i+' DISPLAY_ONLY_SECRET 兰亭书店周六约定'}));
+      const current={...old[0],id:'cold-current',timestamp:at,text:'帮我介绍一下 Python 的用途'},memory={...current,id:'cold-memory',conversation_id:'983',text:'上次我们约在哪里？ WINDOW_HISTORY_LOOKUP'};
+      const archive=new HistoryStore(fixture);for(const key of [coldKey,memoryKey])for(const row of old)archive.append(key,row);archive.append(coldKey,current);archive.append(memoryKey,memory);archive.close();
+      const identity={...historyIdentity,conversationKey:coldKey},prompt=buildSocialPrompt({key:coldKey,rows:[current],direct:true,previousReply:{text:'COLD_OLD_ECHO',delivery_status:'confirmed'}}),before=calls.length;
+      readerConversationKey=coldKey;
+      const first=await rpc('/followup',{...identity,message:prompt,wakeContext:{...wakeContextHint([current]),direct:true},historyExcludeIds:[current.id],images:[{id:imageId}],batchId:'6'.repeat(64)});
+      assert.equal(calls.length,before+1);const coldInput=calls.at(-1),coldText=JSON.stringify(coldInput.messages);assert(!coldText.includes('COLD_ARCHIVE_OLD_'));assert(!coldText.includes('COLD_OLD_ECHO'));assert(coldText.includes('Python'));assert(coldInput.messages.some(m=>m.content?.some(b=>b.type==='image')));
+      const status=(await rpc('/sessions')).sessions.find(s=>s.sessionId===first.sessionId);assert.equal(status.history.request.contextSelection.mode,'independent');assert.equal(status.history.request.recentRecords,0);assert(status.history.request.usage);
+      const next={...current,id:'cold-next',timestamp:at+1,text:'那你接着介绍其他用途'};const newer=new HistoryStore(fixture);newer.append(coldKey,next);newer.close();
+      assert.equal((await rpc('/followup',{...identity,message:buildSocialPrompt({key:coldKey,rows:[next],direct:true}),wakeContext:{...wakeContextHint([next]),direct:true},historyExcludeIds:[next.id]})).sessionId,first.sessionId);
+      const active=calls.at(-1).messages.find(m=>m.source?.socialInputWindow).source.socialInputWindow;assert.equal(active.selection,undefined);assert.equal(active.recentRecords,windowConfig.wechat.history.recentMessages);
+      const lookupStart=calls.length;await rpc('/followup',{...historyIdentity,conversationKey:memoryKey,message:buildSocialPrompt({key:memoryKey,rows:[memory],direct:true}),wakeContext:{...wakeContextHint([memory]),direct:true},historyExcludeIds:[memory.id]});
+      assert.equal(calls.length,lookupStart+2);assert.equal(calls[lookupStart].messages.find(m=>m.source?.socialInputWindow).source.socialInputWindow.recentRecords,0);assert(!JSON.stringify(calls[lookupStart].messages).includes('COLD_ARCHIVE_OLD_'));assert(calls.at(-1).messages.some(m=>m.role==='tool'&&JSON.stringify(m.content).includes('兰亭书店')));
+      assert(ctx.agents.get(first.sessionId).session.snapshotEvents().some(e=>e.data.source?.socialDisplayOnly&&JSON.stringify(e.data).includes('COLD_ARCHIVE_OLD_')));
+      console.log(JSON.stringify({coldWakeIndependentNoHistory:true,coldWakeImagePreserved:true,coldWakeNoClassifierCalls:true,coldWakeActiveWindowRestored:true,coldWakeHistoryToolLoop:true,coldWakeVisibleArchivePreserved:true}));
+    }
+    const result={dshVersion:actualVersion,realRuntime:true,coldWakeIndependentNoHistory:true,coldWakeHistoryToolLoop:true,coldWakeActiveWindowRestored:true,freshPrefetchAfterStableWindow:true,prefetchImagePreserved:true,continuousTranscript:true,perTurnRecentWindow:true,displayOnlyExcludedFromInput:true,oldSummaryNotInInput:true,historyLookupActualToolLoop:true,toolResultsTurnScoped:true,formatRepairRetainsCurrentInteraction:true,windowStableBeyondThreshold:true,windowPersistedResume:true,boundedSessionRotation:true,boundedSummaryCheckpoint:true,boundedRecentRaw:true,boundedRestartResume:true,boundedOriginalPreserved:true,boundedCacheNoExtraCall:true,model:'offline fixture adapter',workspaceCreation:true,workspaceHistoryMove:true,workspaceMoveNoModelCall:true,workspaceMovePersistedResume:true,workspaceOriginalArchived:true,sessionCreation:true,followup:true,persistedResume:true,emptySessionExtensionAdmission:true,extensionSessionPersistedResume:true,missingHeadAutoRecovery:true,damagedHistoryPreserved:true,imageAttachment:true,imageOffload:true,nativeCompaction:true,emptyTools:true,lateScopedToolIsolation:true,deferredOnlyFailureReproduced:true,legacyToolHistoryRecovered:true,codingToolsUnaffected:true,peerCompatibility:true,wechatMessagesSent:0};
     fs.writeFileSync(path.join(project,'state/dsh-020-runtime-verification.json'),JSON.stringify(result,null,2));
     console.log(JSON.stringify(result));
   } finally {

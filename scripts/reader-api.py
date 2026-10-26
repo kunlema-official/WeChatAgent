@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from wechat_files import FILE_TYPE, parse_file_message, FileCatalog
-from wechat_media import clean_account_wxid
+from wechat_media import clean_account_wxid, image_cache_current
 from wechat_forwarded import FORWARD_TYPE, parse_forwarded_record
 from wechat_quote import QUOTE_TYPE, parse_quote_reply
 from wechat_sticker_send import sticker_send_fields, sticker_receipt_md5, APPMSG_STICKER_TYPE, native_gif_bytes, stage_sticker_resource
@@ -548,7 +548,12 @@ class Reader:
             raise PermissionError('Image is unavailable or not authorized')
         cache = self.image_dir / (image_id + '.json')
         if cache.is_file():
-            return read_json(cache)
+            try:
+                cached = read_json(cache)
+                if descriptor.get('localType', 3) != 3 or image_cache_current(self.account, descriptor['talker'], cached):
+                    return {key: value for key, value in cached.items() if key != '_imageSource'}
+            except (ValueError, TypeError, OSError):
+                pass  # Rebuild stale or incomplete previews from this message.
         def run():
             try:
                 if time.monotonic() >= deadline:
@@ -575,7 +580,7 @@ class Reader:
             temp.write_text(json.dumps(result), encoding='utf-8')
             temp.replace(cache)
             self.image_error = ''
-            return result
+            return {key: value for key, value in result.items() if key != '_imageSource'}
         with self.lock:
             future = self.image_jobs.get(image_id)
             if future is None or future.cancelled() or future.done() and future.exception() is not None:

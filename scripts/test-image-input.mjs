@@ -29,6 +29,20 @@ test('native image admission verifies authenticated source, integrity and conver
   target='wechat:private:456';await assert.rejects(imageBlocks(ctx,dir,key,[{id}],'fixture-provider','fixture-model'),/CONVERSATION_MISMATCH/);
   services.llm.resolveModelInfo=async()=>({inputModalities:['text']});await assert.rejects(imageBlocks(ctx,dir,key,[{id}],'fixture-provider','fixture-model'),/UNSUPPORTED/);
 });
+
+test('thumbnail-only input is explicitly labelled without discarding other images or admitting private source metadata',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'wechat-image-quality-'));fs.mkdirSync(path.join(dir,'state'));
+  fs.writeFileSync(path.join(dir,'state/wechat-io-config.json'),JSON.stringify({reader_base_url:'http://127.0.0.1:1',reader_token:'fixture'}));
+  const ids=['a','b'].map(value=>value.repeat(64)),bytes=Buffer.from('fixture'),original=globalThis.fetch,saved=[];
+  t.after(()=>{globalThis.fetch=original;assert(path.resolve(dir).startsWith(path.resolve(os.tmpdir())+path.sep));fs.rmSync(dir,{recursive:true,force:true});});
+  globalThis.fetch=async url=>({ok:true,json:async()=>({imageId:url.split('/').at(-1),conversationKey:'wechat:private:123',mime:'image/jpeg',
+    b64:bytes.toString('base64'),sha256:crypto.createHash('sha256').update(bytes).digest('hex'),
+    sourceQuality:url.endsWith(ids[0])?'thumbnail':'full',_imageSource:{ids:['fixture-private-source']}})});
+  const ctx={get:name=>name==='llm'?{resolveModelInfo:async()=>({inputModalities:['image']})}:{saveImage:async image=>{saved.push(image);return {attachmentId:'fixture'};}}};
+  const blocks=await imageBlocks(ctx,dir,'wechat:private:123',ids.map(id=>({id})),'fixture','fixture');
+  assert.deepEqual(blocks.map(block=>block.type),['text','image','image']);assert.match(blocks[0].text,/I1.*缩略图/);
+  assert.equal(saved.length,2);assert(!JSON.stringify({blocks,saved}).includes('fixture-private-source'));
+});
 test('completed image turns retain durable attachment references but stop rebilling image bytes',()=>{
   const events=[{seq:4,type:'user/message',data:{content:[{type:'text',text:'fixture'},{type:'image',attachment:{attachmentId:'sha256:fixture'}},{type:'image',attachment:{attachmentId:'sha256:previous'},offloaded:true}]}}];let appended;
   offloadCompletedImages({eventAt:seq=>events.find(e=>e.seq===seq),append:(type,data)=>{appended={type,data};}},[4]);

@@ -1,11 +1,13 @@
 import {featureLocation} from './layout-model.mjs';
 import {createExtensionMarket} from './extension-market.js';
 import {createDshAccessUI} from './dsh-access.js';
+import {createPluginUI} from './plugins.js';
 export function createExtensionUI({api,modal,closeModal,confirmAction,escapeHtml:esc,icon,state,renderPage,toast,onDshSave,onProjectSave}) {
   const permissionLabels={web_fetch:'访问公开网络',history_read:'读取当前聊天历史',storage:'保存当前聊天的数据',reply:'申请向当前聊天回复'};
   const dshUI=createDshAccessUI({api,modal,closeModal,escapeHtml:esc,icon,state,renderPage,toast,onSave:onDshSave});
   let catalog,opening=false;
   const market=createExtensionMarket({api,modal,toast,escapeHtml:esc,icon});
+  const plugins=createPluginUI({api,modal,closeModal,confirmAction,escapeHtml:esc,state,renderPage,toast,icon});
   const names=key=>state.names.get(key) ?? key;
   const summary=item=>item.featureState?`功能默认值：${item.featureState.globalEnabled?'开启':'关闭'} · 当前开启 ${item.featureState.effectiveCount}/${item.featureState.totalCount} 个允许的聊天`:
     `扩展开关：${item.enabled?'已开启':'已关闭'} · 聊天范围：${item.chats===null?'所有允许的聊天':(item.chats??[]).length+' 个聊天'}`;
@@ -13,7 +15,7 @@ export function createExtensionUI({api,modal,closeModal,confirmAction,escapeHtml
   async function page() {
     catalog=await api('/api/extensions');
     const extensionsMarkup=await market.page(catalog,await dshUI.page());
-    return '<nav class="workspace-tabs" aria-label="能力分类"><a href="#extensions/catalog" aria-current="page">能力目录</a><a href="#extensions/network">联网与阅读</a><a href="#extensions/dsh">DSH 能力</a></nav>'+extensionsMarkup;
+    return '<nav class="workspace-tabs" aria-label="能力分类"><a href="#extensions/catalog" aria-current="page">能力目录</a><a href="#extensions/network">联网与阅读</a><a href="#extensions/dsh">DSH 能力</a></nav>'+plugins.installMarkup(catalog)+extensionsMarkup;
   }
   const footer=()=>'<p class="extension-error" id="extension-error" role="alert" hidden></p><div class="modal-actions"><button class="button" type="button" data-close>取消</button><button class="button primary" type="submit">保存扩展设置</button></div>';
   function errorInForm(error) {const field=document.querySelector('#extension-error');if(field){field.textContent=error.message;field.hidden=false;}else toast(error.message);}

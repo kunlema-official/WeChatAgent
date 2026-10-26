@@ -1,5 +1,8 @@
+import {sessionUsage} from './session-usage.js';
 import {consoleRoute,routeKey,SETTINGS_SECTIONS} from './layout-model.mjs';
 import {createWorkspaceLayout} from './workspace-layout.js';
+import {createMemoryUI} from './memory-view.js';
+import {createFishNotebookUI} from './fish-notebook.js';
 import {createAssistantFeedbackUI} from './assistant-feedback.js';
 'use strict';
 import { personaError, decodePersonaFile, MAX_PERSONA_BYTES } from './persona-files.mjs';
@@ -19,6 +22,8 @@ const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':
 const icon = name => `<svg aria-hidden="true"><use href="/icons.svg#${name}"></use></svg>`;
 const state = { token: '', config: null, draft: null, revision: '', page: 'overview', roles: [], roleDrafts: new Map(), selectedRole: '', chatKind: 'all', names: new Map(), status: null, job: null, logs: null, loading: false, reader: null };
 const roleSaves = new Map();
+const fishNotebookUI=createFishNotebookUI({api,state,escapeHtml,icon,renderPage,toast,onSave:result=>syncExtensionProject(result,'fishNotebook')});
+const memoryUI=createMemoryUI({api,state,escapeHtml,icon,renderPage,toast,notebookPage:()=>fishNotebookUI.page()});
 const assistantFeedbackUI=createAssistantFeedbackUI({api,modal,closeModal,escapeHtml,icon,toast});
 const personaCategoryUI=createPersonaCategoryUI({state,api,modal,closeModal,escapeHtml,renderPage,toast});
 const sessionGroupUI=createSessionGroupUI({api,modal,closeModal,escapeHtml,icon,renderPage,toast});
@@ -28,7 +33,7 @@ const extensionUI = createExtensionUI({api,modal,closeModal,confirmAction,escape
 const stickerManagerUI=createStickerManagerUI({api,modal,closeModal,escapeHtml,icon,state,renderPage,toast});
 const workspaceLayout=createWorkspaceLayout({api,state,escapeHtml,icon,header,field,toggle,empty,sessionGroupUI,sessionUsage:typeof sessionUsage==='function'?sessionUsage:()=>'',getCards:settingsCards,contextSettingsCard,feedbackCard:()=>assistantFeedbackUI.card(),connectionsPage,logsPage,toolsPage,dshPage:()=>extensionUI.dshPage(),stickerPage:()=>stickerManagerUI.page()});
 const pageScroll=new Map();let currentRoute={page:'overview'};
-function selectRoute(hash){currentRoute=consoleRoute(hash);state.page=currentRoute.page;state.settingsSection=currentRoute.page==='settings'?currentRoute.section:state.settingsSection;state.stickerSection=currentRoute.page==='stickers'?currentRoute.section:state.stickerSection;state.capabilitySection=currentRoute.page==='extensions'?currentRoute.section:state.capabilitySection;if(currentRoute.detail)state.chatDetailTab=currentRoute.detail;}
+function selectRoute(hash){currentRoute=consoleRoute(hash);state.page=currentRoute.page;if(currentRoute.page==="memory")state.memorySection=currentRoute.section;state.settingsSection=currentRoute.page==='settings'?currentRoute.section:state.settingsSection;state.stickerSection=currentRoute.page==='stickers'?currentRoute.section:state.stickerSection;state.capabilitySection=currentRoute.page==='extensions'?currentRoute.section:state.capabilitySection;if(currentRoute.detail)state.chatDetailTab=currentRoute.detail;}
 const pages = {
   settings: ['设置', '默认行为、连接与诊断按用途分类。'],
   setup: ['首次配置', '按下面的步骤连接自己的微信与模型，无需命令行。'],
@@ -42,6 +47,7 @@ const pages = {
   tools: ['工具', '安装、检查与维护，通过按钮完成。'],
   extensions: ['能力', '查看内置能力与 DSH 来源，在聊天中独立分配权限。'],
   stickers: ['表情包', '查看、添加与整理当前账号的共享表情包。'],
+  memory: ['记忆', '查看当前账号的群友观察与会话压缩摘要。'],
 };
 const actions = {
   start: ['启动服务', '正在检查账号与连接，启动通常需要几十秒。'],
@@ -63,7 +69,7 @@ const actions = {
 const searchDefaults={enabled:false,cache:true,maxResults:3,maxSnippetChars:1200,maxSearchesPerTurn:1,timeoutMs:20000,cacheTtlSeconds:900};
 const proactiveDefaults={enabled:false,mode:'mixed',intervalMinutes:240,idleMinutes:120,startTime:'09:00',endTime:'22:00',useSearch:true,jitterMinutes:15};
 const contextDefaults={enabled:false,maxTokens:100000,idleSeconds:60};
-const getPath = (object, path) => {const value=path.split('.').reduce((value,key)=>value?.[key],object);if(value!==undefined)return value;if(path==='wechat.stickers.collectEnabled')return object.wechat?.stickers?.collectGroups??true;if(path==='wechat.stickers.shareEnabled')return object.wechat?.stickers?.shareGroups??true;if(['wechat.stickers.enabled','wechat.stickers.labelCache','wechat.stickers.collectGroups','wechat.stickers.shareGroups'].includes(path))return true;if(path==='wechat.webReader.enabled')return true;if(path.startsWith('wechat.search.'))return searchDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.proactive.'))return proactiveDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.context.'))return contextDefaults[path.split('.').at(-1)];return value;};
+const getPath = (object, path) => {const value=path.split('.').reduce((value,key)=>value?.[key],object);if(value!==undefined)return value;if(path==='wechat.stickers.collectEnabled')return object.wechat?.stickers?.collectGroups??true;if(path==='wechat.stickers.shareEnabled')return object.wechat?.stickers?.shareGroups??true;if(['wechat.stickers.enabled','wechat.stickers.labelCache','wechat.stickers.collectGroups','wechat.stickers.shareGroups'].includes(path))return true;if(path==='wechat.replyLayout.maxMessages')return 2;if(path==='wechat.stickers.candidateLimit')return 8;if(path==='wechat.webReader.enabled')return true;if(path.startsWith('wechat.search.'))return searchDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.proactive.'))return proactiveDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.context.'))return contextDefaults[path.split('.').at(-1)];return value;};
 function syncExtensionProject(result,feature) {
   const previous=state.config, draft=state.draft;
   state.config=result.config;state.revision=result.revision;
@@ -104,7 +110,7 @@ function updateDraftUI() {
   if($('#delete-role'))$('#delete-role').disabled=state.savingAll||roleSaves.size>0||!!state.deletingRole||state.job?.state==='running';
 }
 async function api(route, body, retry = true) {
-  const response = await fetch(route, { method: body === undefined ? 'GET' : 'POST', headers: { 'X-Console-Token': state.token, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(route === '/api/browse' ? 180000 : 20000) });
+  const response = await fetch(route, { method: body === undefined ? 'GET' : 'POST', headers: { 'X-Console-Token': state.token, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(route === '/api/browse' ? 180000 : route === '/api/fish-notebook/write' ? 45000 : 20000) });
   const result = await response.json();
   if (response.status === 401 && retry) {
     const info = await fetch('/api/info').then(r => r.json());
@@ -130,12 +136,12 @@ function confirmAction(title, description, label, callback) {
   modal(title, `<p class="modal-description">${escapeHtml(description)}</p><div class="modal-actions"><button class="button" data-close>取消</button><button class="button primary" id="confirm-action">${escapeHtml(label)}</button></div>`);
   $('#confirm-action').addEventListener('click', () => { closeModal(); callback(); }, { once: true });
 }
-function field(label, path, { type = 'text', help = '', placeholder = '', transform = '', min, max, step, full = false, browse = '' } = {}) {
+function field(label, path, { type = 'text', help = '', placeholder = '', transform = '', min, max, step, full = false, browse = '', required = false } = {}) {
   let value = getPath(state.draft, path);
   if (transform === 'lines') value = (value ?? []).join('\n');
   if (transform === 'seconds') value /= 1000;
   const id = 'field-' + path.replaceAll('.', '-');
-  const attrs = `id="${id}" data-path="${path}" data-transform="${transform}" ${min !== undefined ? `min="${min}"` : ''} ${max !== undefined ? `max="${max}"` : ''} ${step ? `step="${step}"` : ''}`;
+  const attrs = `id="${id}" data-path="${path}" data-transform="${transform}" ${min !== undefined ? `min="${min}"` : ''} ${max !== undefined ? `max="${max}"` : ''} ${step ? `step="${step}"` : ''} ${required ? 'required' : ''}`;
   const input = transform === 'lines' ? `<textarea ${attrs} placeholder="${escapeHtml(placeholder)}">${escapeHtml(value)}</textarea>` : `<input ${attrs} type="${type}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}">`;
   return `<div class="field ${full ? 'full' : ''}"><label for="${id}">${label}</label>${browse ? `<div class="input-with-button">${input}<button class="button" data-browse="${browse}" data-target="${id}">${icon('folder')}选择</button></div>` : input}${help ? `<small>${help}</small>` : ''}</div>`;
 }
@@ -188,7 +194,7 @@ function roleOptions(value, includeDefault = false) {
 function conversationSummary(key) {
   const c=state.draft, a=c.wechat.dshAccess?.chats?.[key]??{}, role=c.persona.chats?.[key]??c.persona.default;
   const workMode=c.wechat.workModes?.[key]??'social',mode=c.wechat.chatModes?.[key]??(workMode==='assistant'?'mention':c.wechat.wake_mode);
-  return '<p class="conversation-summary">'+(workMode==='assistant'?'助手模式'+(key.includes(':group:')?(c.wechat.assistant?.adminOnlyGroups?.[key]===false?' · 管理员模式关闭':' · 管理员模式开启'):' · 仅管理员'):'聊天模式')+' · 人格：'+escapeHtml(role)+(key.includes(':group:')?' · '+(mode==='mention'?'唤醒后回复':'自然参与'):'')+'</p><p class="conversation-summary">'+(workMode==='assistant'&&a.mode==='native'?'使用 DSH 可用能力 · '+escapeHtml(a.preset??'微信助手'):(a.skills?.length??0)+' 个技能 · '+(a.tools?.length??0)+' 个插件工具')+'</p>';
+  return '<p class="conversation-summary">'+(workMode==='assistant'?'助手模式'+(key.includes(':group:')?' · 群友聊天 / 管理员执行':' · 仅管理员'):'聊天模式')+' · 人格：'+escapeHtml(role)+(key.includes(':group:')?' · '+(mode==='mention'?'唤醒后回复':'自然参与'):'')+'</p><p class="conversation-summary">'+(workMode==='assistant'&&a.mode==='native'?'使用 DSH 可用能力 · '+escapeHtml(a.preset??'微信助手'):(a.skills?.length??0)+' 个技能 · '+(a.tools?.length??0)+' 个插件工具')+'</p>';
 }
 async function chatsPage() { return workspaceLayout.chatsPage(); }
 function addChats(kind = state.chatKind==='groups'?'groups':'private') {
@@ -324,7 +330,7 @@ function contextSettingsCard() {
 }
 function settingsCards() { return {
   participation:`<section class="card">${header('群聊参与', '默认方式，可在允许的聊天为每个群单独选择。', '', 'chat')}<div id="behavior-mode">${modeSelector()}</div><div class="form-grid space-top">${field('唤醒词', 'wechat.wake_words', { transform: 'lines', help: '每行一个。群里识别这些文字后进入回复判断。', placeholder: '小助手' })}${field('账号昵称提示', 'account.nicknames', { transform: 'lines', help: '每行一个。填写账号在聊天中使用的昵称。' })}</div><div class="notice plain">${icon('info')}<span>“自然参与”也会判断普通群消息，选择沉默时仍可能调用模型。拍一拍回应继续使用原有规则。</span></div></section>`,
-  admins:`<section class="card">${header('助手模式管理员', '名单属于当前微信账号；仅用于助手模式，聊天模式保持原规则。', '', 'person')}${field('管理员真实微信 ID', 'wechat.assistant.administrators', {transform:'lines',help:'每行一位，最多 50 位。建议从微信好友中选择；昵称及“我是管理员”等聊天文字不能授予权限。保存后生效，名单为空时私聊助手与开启管理员模式的群不执行任务。',placeholder:'wxid_xxxxxxxxxxxxxx'})}<div class="button-row"><button class="button" id="choose-assistant-admin">${icon('plus')}从微信好友选择</button></div><p class="subtle space-top">群聊 → 会话设置 → 助手模式，可单独开关管理员模式，默认开启。关闭后群成员可执行本群授权任务，只能查询或取消自己的任务。权限审批仍在 DSH 本机确认。</p></section>`,
+  admins:`<section class="card">${header('助手模式管理员', '名单属于当前微信账号；仅用于助手模式，聊天模式保持原规则。', '', 'person')}${field('管理员真实微信 ID', 'wechat.assistant.administrators', {transform:'lines',help:'每行一位，最多 50 位。建议从微信好友中选择；昵称及“我是管理员”等聊天文字不能授予权限。保存后生效，名单为空时群友仍可聊天，但无人能执行任务；私聊助手仍仅允许管理员。',placeholder:'wxid_xxxxxxxxxxxxxx'})}<div class="button-row"><button class="button" id="choose-assistant-admin">${icon('plus')}从微信好友选择</button></div><p class="subtle space-top">群聊助手向所有群友开放聊天，工具、技能、文件、联网与任务控制仅允许指定管理员。普通聊天与管理员任务使用独立上下文；原生权限和审批仍然生效。</p></section>`,
   rhythm:`<section class="card">${header('回复节奏', '控制消息合并、发送间隔与群聊频率。', '', 'sliders')}<div class="form-grid">${field('消息合并等待 / 秒', 'social.batch_ms', { type: 'number', transform: 'seconds', min: 0, max: 60, step: .1, help: '把短时间内收到的消息合并到同一轮判断。' })}${field('私聊回复最小间隔 / 秒', 'social.private_min_interval_ms', { type: 'number', transform: 'seconds', min: 0, max: 3600, step: .1 })}${field('群聊回复最小间隔 / 秒', 'social.min_interval_ms', { type: 'number', transform: 'seconds', min: 0, max: 3600, step: 1 })}${field('每分钟群回复上限 / 条', 'social.max_per_minute', { type: 'number', min: 1, max: 1000, step: 1 })}${field('每十分钟群回复上限 / 条', 'social.max_per_ten_minutes', { type: 'number', min: 1, max: 10000, step: 1 })}</div></section>`,
   proactive:`<section class="card">${header('按人设主动聊天', '让当前人格自然找话题或问候，不强迫每次开口。', '', 'chat')}${toggle('启用定时主动聊天', 'wechat.proactive.enabled', '总开关。还需在允许的聊天中逐个开启好友或群聊，默认不向任何聊天主动发送。')}${toggle('允许使用热点与新梗资料', 'wechat.proactive.useSearch', '仅在联网搜索对该聊天也开启时生效。资料不适合人设或无法取得时，改为问候或沉默。')}<div class="form-grid space-top"><div class="field full"><label for="field-proactive-mode">主动内容方向</label><select id="field-proactive-mode" data-path="wechat.proactive.mode">${[['mixed','问候、热点、新梗轮换'],['greeting','问候与生活关心'],['news','人设适合的实时热点'],['meme','人设适合的新梗 / meme']].map(([value,label])=>`<option value="${value}" ${getPath(state.draft,'wechat.proactive.mode')===value?'selected':''}>${label}</option>`).join('')}</select></div>${field('主动机会间隔 / 分钟','wechat.proactive.intervalMinutes',{type:'number',min:30,max:1440,step:1,help:'默认 240 分钟。启用后等待一个间隔，再开始考虑；模型可选择沉默。'})}${field('聊天至少安静 / 分钟','wechat.proactive.idleMinutes',{type:'number',min:5,max:1440,step:1,help:'默认 120 分钟。有新消息、待回复或正在发言时让路。'})}${field('允许开始时间 / 北京时间','wechat.proactive.startTime',{type:'time'})}${field('允许结束时间 / 北京时间','wechat.proactive.endTime',{type:'time'})}${field('随机延迟上限 / 分钟','wechat.proactive.jitterMinutes',{type:'number',min:0,max:60,step:1,help:'在间隔上增加少量随机延迟，使问候不总卡在同一时刻。'})}</div><p class="subtle">保存后一分钟内应用。沿用每个聊天当前的人设、关系和上下文；热点与梗不合适就不讲。避免重复话题和催促回复，好友明确要求不被主动打扰时暂停，直到其再次主动聊天。重启不会补发过期草稿。每个符合条件的主动机会可能调用一次模型，选择沉默也会产生模型消耗。</p></section>`,
   reader:`<section class="card">${header('网页阅读', '模型默认具备网页阅读能力，无需导入或配置密钥。', '', 'search')}${toggle('网页阅读', 'wechat.webReader.enabled', '默认开启。发来公开链接并要求阅读、总结或分析时，模型会读取实际正文；独立于联网搜索开关，保存后生效。')}<p class="subtle">例如：总结这个网页：https://example.com 。每轮最多三页，每页最多 12,000 字符；需要登录、验证码或执行 JavaScript 的页面可能无法读取。网页资料会提交给当前模型，工具调用与后续总结会产生模型消耗。</p></section>`,
@@ -414,13 +420,14 @@ async function renderPage() {
   document.querySelectorAll('[data-page]').forEach(a => page === a.dataset.page ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
   let markup;
   try {
-    if (['chats','settings','extensions','stickers'].includes(page)) $('#page-body').innerHTML = '<div class="loading-state">正在读取…</div>';
+    if (['chats','settings','extensions','stickers','memory'].includes(page)) $('#page-body').innerHTML = '<div class="loading-state">正在读取…</div>';
     if (page === 'overview') markup = overviewPage();
     if (page === 'chats') markup = await chatsPage();
     if (page === 'roles') markup = rolesPage();
     if (page === 'settings') { if(state.settingsSection==='connections'&&!state.reader)state.reader=await api('/api/reader-config'); markup=await workspaceLayout.settingsPage(); }
     if (page === 'extensions') markup = state.capabilitySection==='catalog'?await extensionUI.page():await workspaceLayout.capabilityPage();
     if (page === 'stickers') markup = await workspaceLayout.stickersPage();
+    if (page === 'memory') markup = await memoryUI.page();
     if (page === 'setup') { if (!state.reader) state.reader = await api('/api/reader-config'); markup = setupPage(); }
 
   } catch (error) {
@@ -429,6 +436,7 @@ async function renderPage() {
   if (sequence !== renderSequence || state.page !== page) return;
   if(page==='setup')markup+=`<section class="card process-recovery-card">${header('端口与进程排查','遇到端口占用、其他微信实例或连接失败时，先检查正在运行的进程。','','tool')}<p class="card-description">检查不会停止程序。只有选中具体进程并再次确认后才会停止；随后可重新打开微信或 DSH，再重试配置。</p><button class="button" data-process-recovery>${icon('search')}检查端口与进程</button></section>`;
   $('#page-body').innerHTML = markup; updateDraftUI(); paintStatus(); paintReaderSetup();
+  if(page==='memory'){if(state.memorySection==='notebook')fishNotebookUI.mount();else memoryUI.mount();}
   if(page==='stickers'&&state.stickerSection==='library')stickerManagerUI.mount();
   if(page==='stickers'&&state.stickerSection==='collection')api('/api/sticker-pool').then(pool=>{if(sequence!==renderSequence||!$('#sticker-pool-status'))return;const labels={selected:'DS 已完成评选',waiting_retry:'等待 DS 重试'};$('#sticker-pool-status').textContent='已入池 '+pool.count+'/50 · 待评选 '+(pool.waiting+pool.legacyWaiting)+' · '+(pool.review==='reviewing'?'DS 正在评选':labels[pool.lastReview?.status]??(pool.waiting?'等待 DS 评选':'未满池或没有新候选'));}).catch(()=>{});
   $('#role-content')?.addEventListener('input', event => {
@@ -633,6 +641,8 @@ document.addEventListener('click', event => {
     return openProcessRecovery({api,modal,refreshStatus,toast,repairWeChat:true,onRecovered:async()=>{closeModal();await runAction('wechat-open');}});
   }
   if(sessionGroupUI.click(button))return;
+  if(fishNotebookUI.click(button))return;
+  if(memoryUI.click(button))return;
   if(personaCategoryUI.click(button))return;
   if(button.matches('[data-process-recovery]')||button.id==='job-recovery')return openProcessRecovery({api,modal,refreshStatus,toast});
   if (button.hasAttribute('data-close')) return closeModal();

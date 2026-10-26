@@ -1,4 +1,4 @@
-export const MAIN_PAGES=['overview','chats','roles','extensions','stickers','settings'];
+export const MAIN_PAGES=['overview','chats','roles','extensions','stickers','memory','settings'];
 export const SETTINGS_SECTIONS={chat:'聊天默认值',assistant:'助手设置',context:'上下文',connections:'微信与 DSH',diagnostics:'诊断',logs:'运行日志',advanced:'开发者选项',appearance:'外观与数据'};
 export const STICKER_SECTIONS={library:'我的表情',collection:'自动收集',sources:'来源与搜索',sending:'发送设置'};
 export const CAPABILITY_SECTIONS={catalog:'能力目录',network:'联网与阅读',dsh:'DSH 能力'};
@@ -7,6 +7,7 @@ export function consoleRoute(hash=''){
  const [page,section]=String(hash).replace(/^#/,'').split('/');
  if(aliases[page])return {...aliases[page]};
  if(page==='setup')return {page:'setup'};
+ if(page==='memory')return {page,section:['summaries','notebook'].includes(section)?section:'members'};
  if(page==='settings')return {page,section:Object.hasOwn(SETTINGS_SECTIONS,section)?section:'chat'};
  if(page==='stickers')return {page,section:Object.hasOwn(STICKER_SECTIONS,section)?section:'library'};
  if(page==='extensions')return {page,section:Object.hasOwn(CAPABILITY_SECTIONS,section)?section:'catalog'};

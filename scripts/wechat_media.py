@@ -8,8 +8,11 @@ import os
 import re
 import struct
 import hashlib
+import json
 from pathlib import Path
 MAX_EMBED_SIZE = 8 * 1024 * 1024
+MAX_IMAGE_SOURCE_SIZE = 32 * 1024 * 1024
+IMAGE_SOURCE_VERSION = 2
 V2_MAGIC = b"\x07\x08V2\x08\x07"
 V2_CIPHERTEXT_START = 15
 
@@ -84,13 +87,13 @@ def resolve_v2_media_key(account_dir, own_wxid='', kvcomm_dir=''):
                 return code & 0xff, aes_key
     return None
 
-def decode_wechat_v2(filepath, xor_key, aes_key):
+def decode_wechat_v2(filepath, xor_key, aes_key, max_size=MAX_EMBED_SIZE):
     try:
         from Crypto.Cipher import AES
         from Crypto.Util import Padding
         with open(filepath, 'rb') as stream:
-            data = stream.read(MAX_EMBED_SIZE + 1)
-        if len(data) > MAX_EMBED_SIZE or not data.startswith(V2_MAGIC):
+            data = stream.read(max_size + 1)
+        if len(data) > max_size or not data.startswith(V2_MAGIC):
             return None
         signature, aes_size, xor_size = struct.unpack('<6sLLx', data[:V2_CIPHERTEXT_START])
         if signature != V2_MAGIC:
@@ -107,10 +110,65 @@ def decode_wechat_v2(filepath, xor_key, aes_key):
         else:
             raw, tail = remainder, b''
         output = decrypted + raw + tail
-        mime = detect_mime_from_bytes(output[:16])
+        mime = detect_mime_from_bytes(output[:16]) or ('image/x-wxgf' if output[:4].lower() == b'wxgf' else None)
         return (output, mime) if mime else None
     except (OSError, ValueError, struct.error):
         return None
+
+
+def local_image_candidates(account, talker, ids):
+    """Find only message-bound files in this conversation, full copies first."""
+    wanted = {value.lower() for value in ids if isinstance(value, str) and re.fullmatch(r'[a-fA-F0-9]{32}', value)}
+    attach = Path(account) / 'msg' / 'attach' / hashlib.md5(talker.encode()).hexdigest()
+    result = []
+    if not wanted or not attach.is_dir():
+        return result
+    # Enumerate names once per bucket, rather than issuing thousands of stat
+    # calls for the sliding binary resource-ID candidates.
+    for month in sorted(attach.iterdir(), reverse=True):
+        folder = month / 'Img'
+        if not folder.is_dir():
+            continue
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                match = re.fullmatch(r'([a-f0-9]{32})(_h|_t)?\.dat', entry.name, re.IGNORECASE)
+                if not match or match[1].lower() not in wanted or not entry.is_file():
+                    continue
+                try:
+                    info = entry.stat()
+                except OSError:
+                    continue  # A downloading file can disappear between scans.
+                result.append((Path(entry.path), (match[2] or '').lower() == '_t', info.st_size, info.st_mtime_ns))
+    return sorted(result, key=lambda item: (item[1], -item[2], str(item[0])))
+
+
+def image_source_fingerprint(account, candidates):
+    """Notice newly downloaded originals and updated message-resource mappings."""
+    account = Path(account)
+    state = [(str(p.relative_to(account)), thumb, size, modified) for p, thumb, size, modified in candidates]
+    resource = account / 'db_storage' / 'message' / 'message_resource.db'
+    for file in (resource, resource.with_name(resource.name + '-wal')):
+        try:
+            info = file.stat()
+            state.append((file.name, info.st_size, info.st_mtime_ns))
+        except FileNotFoundError:
+            state.append((file.name, None))
+    return hashlib.sha256(json.dumps([IMAGE_SOURCE_VERSION, state], sort_keys=True).encode()).hexdigest()
+
+
+def image_cache_current(account, talker, cached):
+    if not isinstance(cached, dict):
+        return False
+    source = cached.get('_imageSource', {})
+    if not isinstance(source, dict):
+        return False
+    ids = source.get('ids')
+    if source.get('version') != IMAGE_SOURCE_VERSION or not isinstance(ids, list) or not ids or len(ids) > 4096:
+        return False
+    if any(not isinstance(value, str) or not re.fullmatch(r'[a-f0-9]{32}', value) for value in ids):
+        return False
+    candidates = local_image_candidates(account, talker, ids)
+    return source.get('fingerprint') == image_source_fingerprint(account, candidates)
 
 def extract_media_md5s(value):
     matches = re.findall(r'(?<![0-9a-f])([0-9a-f]{32})(?![0-9a-f])', str(value or ''), re.IGNORECASE)

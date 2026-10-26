@@ -7,6 +7,7 @@ import json
 import pathlib
 import re
 import sys
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Embedded Python uses an isolated _pth file and does not add the script directory.
@@ -32,7 +33,7 @@ except (ImportError, OSError) as error:
     sys.exit(1)
 
 
-from wechat_image_normalize import normalize_image
+from wechat_image_normalize import normalize_image, decode_image_source
 
 
 def resolve(descriptor):
@@ -78,26 +79,40 @@ def resolve(descriptor):
     derived = media.resolve_v2_media_key(str(reader.account), reader.own_wxid)
     if derived and derived not in keys:
         keys.append(derived)
-    attach = reader.account / 'msg' / 'attach' / hashlib.md5(talker.encode()).hexdigest()
     # Resource IDs bind files to the exact server message. Local IDs alone are
     # deliberately insufficient because they collide between shards/chats.
-    for file_id in ids:
-        candidates = []
-        if attach.is_dir():
-            for month in sorted(attach.iterdir(), reverse=True):
-                image_dir = month / 'Img'
-                for suffix in ('.dat', '_h.dat', '_t.dat'):
-                    file = image_dir / (file_id + suffix)
-                    if file.is_file() and file.stat().st_size <= media.MAX_EMBED_SIZE:
-                        candidates.append(file)
-        for file in candidates:
+    ids = ids[:4096]
+    candidates = media.local_image_candidates(reader.account, talker, ids)
+    fingerprint = media.image_source_fingerprint(reader.account, candidates)
+    wxgf_deadline = time.monotonic() + 5
+    for thumbnail in (False, True):
+        best, best_area = None, 0
+        for file, is_thumbnail, size, _ in candidates:
+            if is_thumbnail != thumbnail or size > media.MAX_IMAGE_SOURCE_SIZE:
+                continue
             for xor, aes in keys:
-                decoded = media.decode_wechat_v2(str(file), xor, aes)
+                decoded = media.decode_wechat_v2(str(file), xor, aes, max_size=media.MAX_IMAGE_SOURCE_SIZE)
                 if decoded:
                     try:
-                        return normalize_image(decoded[0])
+                        raw = decoded[0]
+                        if decoded[1] == 'image/x-wxgf':
+                            remaining = wxgf_deadline - time.monotonic()
+                            if remaining <= .05:
+                                break
+                            raw = decode_image_source(raw, timeout=remaining)
+                        with Image.open(io.BytesIO(raw)) as image:
+                            width, height = image.size
+                        area = width * height
+                        if best_area < area <= 40_000_000:
+                            best = {**normalize_image(raw, max_side=2048, max_source_bytes=media.MAX_IMAGE_SOURCE_SIZE),
+                                'sourceQuality': 'thumbnail' if thumbnail else 'full', 'sourceWidth': width, 'sourceHeight': height,
+                                '_imageSource': {'version': media.IMAGE_SOURCE_VERSION, 'ids': ids, 'fingerprint': fingerprint}}
+                            best_area = area
+                        break
                     except Exception:
                         continue
+        if best is not None:
+            return best
     raise RuntimeError('IMAGE_LOCAL_COPY_UNAVAILABLE')
 
 

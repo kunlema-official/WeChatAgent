@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import {assistantAdministrator,assistantSenderAllowed} from './assistant-policy.mjs';
+import {assistantAdministrator,assistantSenderAllowed,assistantGroupChatAllowed} from './assistant-policy.mjs';
 import {conversationAccess,conversationWorkMode} from './conversation-policy.mjs';
 import {dshCatalog} from './dsh-access.mjs';
 import {taskFault,liveTask,assistantHelp,formatAssistantTask} from './assistant-tasks.mjs';
@@ -9,7 +9,11 @@ import {taskFault,liveTask,assistantHelp,formatAssistantTask} from './assistant-
 export function createAssistantControl({ctx,root,tasks,accountReady,sessionGroups,mappings,profiles,pending,notifications}){
   const confirmations=new Map(),approvals=new Map(),questions=new Map();
   const settings=()=>JSON.parse(fs.readFileSync(path.join(root,'config/wechatagent.json'),'utf8')).wechat;
-  const allowed=(body,w=settings())=>{if(!accountReady()||conversationWorkMode(w,body.conversationKey)!=='assistant'||body.localControl!==true&&!assistantSenderAllowed(w,body.conversationKey,body.senderWxid))throw taskFault('ASSISTANT_SENDER_DENIED',403);return w;};
+  const allowed=(body,w=settings())=>{
+    if(!accountReady()||conversationWorkMode(w,body.conversationKey)!=='assistant')throw taskFault('ASSISTANT_SENDER_DENIED',403);
+    if(body.localControl!==true&&!assistantSenderAllowed(w,body.conversationKey,body.senderWxid))throw taskFault(assistantGroupChatAllowed(w,body.conversationKey,body.senderWxid)?'ASSISTANT_ADMIN_REQUIRED':'ASSISTANT_SENDER_DENIED',403);
+    return w;
+  };
   const own=(body,w,job)=>{if(!job||job.key!==body.conversationKey)throw taskFault('ASSISTANT_TASK_NOT_FOUND',404);if(body.localControl!==true&&!assistantAdministrator(w,body.senderWxid)&&job.sender!==body.senderWxid)throw taskFault('ASSISTANT_TASK_NOT_ALLOWED',403);return job;};
   const prune=()=>{for(const [id,item]of confirmations)if(item.expiresAt<Date.now())confirmations.delete(id);};
   const disposeApproval=ctx.on('approval/request',async(req,next)=>{

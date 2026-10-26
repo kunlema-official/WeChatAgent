@@ -42,7 +42,10 @@ export async function imageBlocks(ctx,root,conversationKey,images,provider,model
     const data=Buffer.from(content.b64,'base64');
     if (!data.length || data.length>768*1024 || data.toString('base64')!==content.b64 || crypto.createHash('sha256').update(data).digest('hex')!==content.sha256) throw new Error('IMAGE_INTEGRITY_FAILED');
     const attachment=await attachments.saveImage({data,mediaType:content.mime,name:'wechat-image-'+image.id.slice(0,12)});
-    return {type:'image',attachment};
+    const block={type:'image',attachment};
+    return content.sourceQuality==='thumbnail' ? [
+      {type:'text',text:`[附图 I${index+1} 当前仅提供微信本地缩略图，细节和小字可能不清楚；不要把低清画面当作原图或猜测看不清的内容。需要细节时请用户先在电脑微信打开原图，再重新发送图片。]`},block,
+    ] : block;
     },{timeoutMs:12000,signal});
     } catch(error) {
       return unavailableBlock(image,index,error);
@@ -51,7 +54,7 @@ export async function imageBlocks(ctx,root,conversationKey,images,provider,model
   await Promise.all(Array.from({length:Math.min(2,images.length)},async()=>{
     while(next<images.length){const index=next++;blocks[index]=await prepare(images[index],index);}
   }));
-  return blocks;
+  return blocks.flat();
 }
 
 export function offloadCompletedImages(session,sourceSeqs) {

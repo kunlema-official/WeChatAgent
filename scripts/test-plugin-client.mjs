@@ -27,7 +27,7 @@ async function fixture(t, results) {
     const chunks=[];for await(const chunk of req)chunks.push(chunk);
     requests.push(JSON.parse(Buffer.concat(chunks)));
     const result=results[Math.min(requests.length-1,results.length-1)];
-    res.writeHead(result.status,{'content-type':'application/json'});res.end(JSON.stringify(result.body));
+    res.writeHead(result.status,{'content-type':'application/json',connection:'close'});res.end(JSON.stringify(result.body));
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
@@ -56,7 +56,7 @@ test('missing image fallback cannot learn labels or reuse the image-bearing deci
 test('binding, integrity and model-turn errors are never retried without images',async t=>{
   for(const failure of [{error:'agent_unavailable',detail:'IMAGE_CONVERSATION_MISMATCH'},{error:'agent_unavailable',detail:'IMAGE_INTEGRITY_FAILED'},{error:'turn_failed',detail:'IMAGE_READER_NOT_READY'}]){
     const f=await fixture(t,[{status:503,body:failure}]);
-    await assert.rejects(f.client.followup('wechat:private:123','fixture',{images:[{id:'a'.repeat(64)}]}));
+    await assert.rejects(f.client.followup('wechat:private:123','fixture',{images:[{id:'a'.repeat(64)}]}),error=>error.message.startsWith('DSH plugin: '+failure.error));
     assert.equal(f.requests.length,1);
   }
 });

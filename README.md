@@ -1,19 +1,17 @@
-# WeChatAgent 0.5.0-preview.1（语音集成源码预览）
-
-> **预览状态：** 本次交付是源码改造预览，不是已验证的 Windows 安装器。已接入本地 SenseVoice 调用链和 TTS→SILK 生成代码（当前环境尚未完成真实模型/联网验收）；当前公开 Hook 源码没有原生语音发送实现，所以模型选中语音回复时会安全降级为文字。请勿直接覆盖正在运行的 0.4.0 安装。详见[语音模块说明](docs/VOICE_MODULE.md)和[预览发布说明](docs/releases/0.5.0-preview.2-mimo-tts.md)。
+# WeChatAgent 0.4.1
 
 Windows 微信助手与桌面控制台。为允许的好友和群聊提供人格聊天、独立上下文、按需联网搜索、图片与表情理解、原生表情发送，也可将微信作为 DSH 的远程任务入口。
 
-## 0.4.0 更新
+## 0.4.1 更新
 
-- 完善助手模式：按聊天授权 DSH 能力、管理员控制、任务管理、原生审批和普通文件收发。
-- 新增可编辑的任务语录，减少排队信息、任务编号及后台命令完成通知对刷屏的影响。
-- 主导航整理为 **概览、聊天、人格、能力、表情包、设置**，合并重复入口，明确账号默认与单聊覆盖。
-- 保留已有账号、人格、授权、工作区及会话历史；完整变更见[发布说明](RELEASE_NOTES.md)。语音预览的边界与已知限制见[语音模块说明](docs/VOICE_MODULE.md)。
+- 新增 ZIP 插件安装、按聊天授权、独立子进程与插件开发规范。
+- 鱼的记事本改为可选插件，旧日记和查看计数继续兼容；成品 ZIP 已纳入源码。
+- 新增群友记忆与压缩摘要可视化，表情候选和分条数量可调整。
+- 修复低清图片缓存、异常媒体阻塞、重复输入与插件注册冲突；完整变更见 [发布说明](RELEASE_NOTES.md)。
 
 ## 安装与升级
 
-正式版 0.4.0 安装包为 WeChatAgent-Setup-0.4.0-x64.exe，适用于 Windows 10/11 x64。本次 0.5.0-preview.1 仅提供源码预览，尚未生成经过 Windows 11 实机验收的安装包；请不要把源码 ZIP 当成可直接覆盖安装的升级包。
+安装包文件名为 WeChatAgent-Setup-0.4.1-x64.exe，适用于 Windows 10/11 x64，由维护者上传至 GitHub Releases。源码目录不包含安装器和第三方二进制。
 
 1. 选择一次安装根目录：程序放入 app，WeChatAgent 配置、缓存和运行数据放入同级 data。
 2. 在首次配置中打开匹配微信并登录，自动查找账号，再连接并验证数据库。
@@ -48,9 +46,23 @@ DSH 桌面程序不内置，数据由其独立管理；微信原始数据库不�
 3. 在“能力与权限”选择任务预设与授权范围；按需要启用文件收发、联网搜索及微信审批。
 4. 在微信描述任务，或发送“助手帮助”“助手能力”“任务列表”“任务状态”“取消任务”。群聊仍需按本群规则唤醒。
 
-私聊助手仅供指定管理员使用。群管理员模式可独立开关；关闭后成员可使用本群已授权能力，仅管理自己的任务。群内共用工作区和历史，并非每位成员独立的系统沙箱。原生审批默认在电脑端，微信确认需明确启用并核对一次性操作。
+群聊助手向所有群友开放普通聊天，工具、技能、联网、文件和任务控制仅允许指定管理员。群友聊天与管理员任务使用独立上下文，管理员执行任务时群友仍可聊天，管理员也可用“聊天：内容”进入无工具通道；旧群管理员开关不再放开执行权限。私聊助手仅供指定管理员使用。原生审批默认在电脑端，微信确认需明确启用并核对一次性操作。这不是操作系统级沙箱。
 
 两种模式分别保留设置与上下文。DSH 重启时进行中的任务标记中断，核对结果后再继续，不自动重跑可能已经发生的操作。详见[远程助手](docs/ASSISTANT_REMOTE.md)、[按聊天授权](docs/DSH_CHAT_ACCESS.md)。
+
+## ZIP 插件接入
+
+在“能力 → 能力目录”拖入符合 WeChatAgent API v2 的 ZIP，核对名称、版本和权限后安装，再按聊天启用。安装后默认关闭；更新归档旧代码、保留数据并要求重新启用，卸载也保留数据。
+
+插件使用 `plugin.json + index.mjs`，可注册模型工具、读取当前聊天历史、保存账号/聊天隔离数据、抓取公开网页、申请本轮文字回复，并在独立子进程中受超时与内存限制。它与 DSH 插件分别管理；插件故障不会要求归档整个会话。只启用信任的代码，进程隔离不等于恶意代码沙箱。
+
+编写规范见 [插件开发规范](docs/PLUGIN_DEVELOPMENT.md)，完整代码见 [聊天小便签示例](examples/plugins/chat-notes/)。可执行 `node scripts/pack-plugin.mjs examples/plugins/chat-notes release/plugins/chat-notes-1.0.0.zip` 生成可安装示例包。首次加载新版接口需要重开 DSH 及微信后台；0.4.1 安装器已包含所需宿主，旧安装器需先升级。
+
+## 鱼的记事本插件
+
+鱼的记事本已拆为可选 ZIP：源码在 `optional-extensions/fish-notebook/`，随源码提供 `optional-extensions/packages/fish-notebook-1.0.0.zip`，本机构建副本为 `release/plugins/fish-notebook-1.0.0.zip`。在能力目录拖入安装，明确选择权限与聊天后启用；默认北京时间 21:30 整理，也可提前写。原有日记和询问计数继续兼容，前两次害羞回应、第三次分享规则保留。
+
+开关、时间和聊天范围统一在插件配置中管理，原来的“记忆 → 鱼的记事本”继续查看历史。需加载支持动作、文档、当前人格、独立模型生成与每日计划的新宿主；0.4.1 安装器包含所需宿主，旧安装器需先升级。详见 [记事本插件说明](docs/FISH_NOTEBOOK.md) 和 [插件包 README](optional-extensions/fish-notebook/README.md)。
 
 ## 文件与任务反馈
 
@@ -84,6 +96,8 @@ dsh-meme 需用户自行安装，本项目适配其现有接口，不修改原�
 
 ## 源码与构建
 
+源码、运行数据、依赖、发布产物与历史归档的职责见 [项目目录与维护说明](docs/PROJECT_LAYOUT.md)。用户安装的插件和本机授权设置属于私有数据，不提交到公开仓库。
+
 源码不含账号、凭据、联系人、聊天记录、微信客户端或原生 DLL。公开预设为维护者已授权的通用人格。开发构建需准备已授权的匹配微信、Hook 编译产物、wx_key.dll 和读取依赖；普通安装版用户无需安装开发工具。
 
 在 Windows 环境安装根目录和 DSH 插件的锁定依赖，然后构建；**无需提供 DSH 桌面程序或设置 WECHATAGENT_DSH_SOURCE**。
@@ -101,3 +115,8 @@ npm run installer:build
 安装器输出到 release/installer，构建按根 package.json 版本命名。可复用已校验的 Python 构建缓存；第三方组件遵守各自许可，参见 [LICENSES.md](LICENSES.md)。发布验证使用隔离目录和虚构账号；不以自动化测试替代另一台物理设备的真实账号验收。
 
 觉得好用，欢迎在 [GitHub 项目](https://github.com/sourcepro5/WeChatAgent)点个 star。更早的更新记录见[0.3.9 发布说明](docs/releases/0.3.9.md)。
+
+## Voice preview based on upstream 0.4.1
+
+This repository carries the DSH voice extension on top of upstream 0.4.1 plugin improvements. The cloud-built WeChatAgent-Voice-Update-0.5.0-preview.3-x64.exe is an update package for an existing workspace; it does not bundle the WeChat or DSH desktop applications. Incoming voice recognition still requires DSH speechToText with sensevoice-local; MiMo speech synthesis requires a valid MIMO_API_KEY.
+

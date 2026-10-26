@@ -44,6 +44,7 @@ export class MediaOutbox {
         if(readyAt>=item.expiresAt){this.finish(item,'本机发送额度不足，本轮配图已取消，后续文字继续按发送限额处理。');return;}
         if(readyAt>Date.now()){nextAt=readyAt;return;}
       }
+      if(!this.buffer.mediaReplies.has(part.deliveryId))return;
       if(part.retryAt>Date.now()){nextAt=Math.min(part.retryAt,item.expiresAt);return;}
       if(receiptOnly)part.receiptChecks=(part.receiptChecks??0)+1;
       part.state='sending';delete part.retryAt;this.buffer.saveMedia();
@@ -82,6 +83,11 @@ export class MediaOutbox {
       if(!this.stopped&&this.buffer.mediaReplies.has(part.deliveryId))this.buffer.saveMedia();
       this.running.delete(key);if(!this.stopped&&[...this.buffer.mediaReplies.values()].some(item=>item.key===key))this.wake(key,nextAt);
     }
+  }
+  cancelOffline(){
+    for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();
+    for(const controller of this.running.values())controller.abort(Error('DSH_OFFLINE'));
+    for(const item of [...this.buffer.mediaReplies.values()])this.finish(item,'DSH 已离线或重启，旧配图不再补发；已提交部分保留送达记录，不视为已确认。');
   }
   stop(){this.stopped=true;for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();for(const controller of this.running.values())controller.abort(new Error('media_stopped'));}
 }

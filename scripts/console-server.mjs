@@ -1,8 +1,13 @@
 import {feedbackSnapshot,saveFeedback} from '../packages/dsh-social-bridge-plugin/assistant-feedback.mjs';
+import {createMemoryConsole} from './memory-console.mjs';
+import {fishNotebookSnapshot} from './fish-notebook-console.mjs';
 import fs from 'node:fs';
 import {createPersonaCategories} from './persona-categories.mjs';
 import {createUpdateChecker} from './update-check.mjs';
 import {builtinCatalog,applyBuiltinUpdate,extensionPresentation} from './extension-status.mjs';
+import {pluginCatalog,updatePlugin,archivePlugin,packageFiles,inspectPackage} from '../packages/plugin-api/catalog.mjs';
+import {PluginInstaller} from '../packages/plugin-api/installer.mjs';
+import {packZip} from '../packages/plugin-api/zip.mjs';
 import {bundledExtensionCatalog,saveBundledExtension} from './bundled-extensions.mjs';
 import path from 'node:path';
 import http from 'node:http';
@@ -18,7 +23,7 @@ import {applyChatSettings} from '../public/console/conversation-settings.mjs';
 import { runReaderSetup, readerSetupMessage } from './reader-setup.mjs';
 import { dshConfigurationMatches,sameProjectPath } from './dsh-configuration.mjs';
 import { createProcessRecovery,startupConflictPorts } from './process-recovery.mjs';
-import { readerAccountId, cachedReaderAccount, applyReaderAccount } from './reader-account-state.mjs';
+import { readerAccountId, cachedReaderAccount, applyReaderAccount,activeReaderAccount } from './reader-account-state.mjs';
 import {verifyWeChatAccount} from './wechat-account-check.mjs';
 
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
@@ -85,6 +90,7 @@ import {allowedConversation,validateConversationSettings,conversationWorkMode} f
 export function createConsole({ root = projectRoot, port = 3210, runner, readerSetup = runReaderSetup, accountVerifier = verifyWeChatAccount, fetchImpl = fetch, nodeExecutable = process.execPath, filePicker, onQuit, processProbe, processStop } = {}) {
   const updates=createUpdateChecker({root,fetchImpl});
   const publicDir = path.join(projectRoot, 'public', 'console');
+  const pluginInstaller=new PluginInstaller(root);
   const personaCategories=createPersonaCategories(root);
   const categorySnapshot=()=>{try{return personaCategories.read();}catch(error){return {categories:[],assignments:{},revision:null,error:error.message};}};
   const configFile = path.join(root, 'config', 'wechatagent.json');
@@ -99,6 +105,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
   let shutdownPromise=null,shuttingDown=false;
   const processRecovery=createProcessRecovery({root,probe:processProbe,stop:processStop});
   let statusPromise; let statusTime = 0;
+  const memoryView=createMemoryConsole({root,configFor:()=>snapshot().config,plugin});
   const snapshot = () => {
     const raw = fs.readFileSync(fs.existsSync(configFile) ? configFile : path.join(root, 'config', 'wechatagent.example.json'), 'utf8');
     return { config: JSON.parse(raw.replace(/^\uFEFF/, '')), revision: hash(raw) };
@@ -171,13 +178,15 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
     if(body===undefined)return remote(`http://127.0.0.1:${config.ports.dshPlugin}${route}`, token, 5000);
     const response=await fetchImpl(`http://127.0.0.1:${config.ports.dshPlugin}${route}`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
     const result=await response.json();
-    if(!response.ok){const messages={SESSION_GROUP_SERVICE_UNAVAILABLE:'DSH 工作区服务尚未就绪，请从托盘完整退出并重开 DSH。',SESSION_GROUP_INVALID_NAME:'分组名称需要 1–60 个字符。',SESSION_GROUP_INVALID_PATH:'请选择一个已存在、可访问的完整目录。',SESSION_GROUP_CHANGED:'工作区列表已变化，请刷新会话页面后重试。',SESSION_GROUP_NOT_FOUND:'工作区已被移除，请刷新后重新选择。',SESSION_GROUP_DUPLICATE_NAME:'DSH 中已有同名工作区，请换一个名称。',SESSION_GROUP_NOT_EMPTY:'此工作区仍有未归档的 DSH 会话，请先移走它们。',SESSION_GROUP_SESSION_BUSY:'此聊天正在回复或维护，请稍后再移动。',SESSION_GROUP_SESSION_CHANGED:'当前会话已变化，请刷新后重新移动。',SESSION_GROUP_ACCOUNT_CHANGED:'微信账号已切换，请重开 DSH 后重试。',SESSION_GROUP_CHAT_NOT_ALLOWED:'请选择聊天范围中已保存的聊天。',SESSION_GROUP_CONFIRM_REQUIRED:'请确认跨目录移动时保留历史的方式。',SESSION_GROUP_SOURCE_UNAVAILABLE:'原会话的工作目录无法访问，请恢复该目录后再移动。'};throw fault(messages[result.error]??'工作区操作未完成，原会话仍保留。请检查 DSH 运行日志后重试。',[400,404,409].includes(response.status)?response.status:503);}
+    if(!response.ok){const messages={SESSION_GROUP_SERVICE_UNAVAILABLE:'DSH 工作区服务尚未就绪，请从托盘完整退出并重开 DSH。',SESSION_GROUP_INVALID_NAME:'分组名称需要 1–60 个字符。',SESSION_GROUP_INVALID_PATH:'请选择一个已存在、可访问的完整目录。',SESSION_GROUP_CHANGED:'工作区列表已变化，请刷新会话页面后重试。',SESSION_GROUP_NOT_FOUND:'工作区已被移除，请刷新后重新选择。',SESSION_GROUP_DUPLICATE_NAME:'DSH 中已有同名工作区，请换一个名称。',SESSION_GROUP_NOT_EMPTY:'此工作区仍有未归档的 DSH 会话，请先移走它们。',SESSION_GROUP_SESSION_BUSY:'此聊天正在回复或维护，请稍后再移动。',SESSION_GROUP_SESSION_CHANGED:'当前会话已变化，请刷新后重新移动。',SESSION_GROUP_ACCOUNT_CHANGED:'微信账号已切换，请重开 DSH 后重试。',SESSION_GROUP_CHAT_NOT_ALLOWED:'请选择聊天范围中已保存的聊天。',SESSION_GROUP_CONFIRM_REQUIRED:'请确认跨目录移动时保留历史的方式。',SESSION_GROUP_SOURCE_UNAVAILABLE:'原会话的工作目录无法访问，请恢复该目录后再移动。'};throw fault(messages[result.error]??(route.startsWith('/plugin-actions/')||route.startsWith('/fish-notebook/')?'插件操作暂未完成，请检查插件授权并确认 DSH 已加载新版宿主。':'工作区操作未完成，原会话仍保留。请检查 DSH 运行日志后重试。'),[400,404,409].includes(response.status)?response.status:503);}
     return result;
   }
   function buffered() {
     const buffer = optionalJson(path.join(root, 'state', 'social-messages.json'), { chats: {} });
-    const rows = Object.entries(buffer.chats ?? {}).flatMap(([key, messages]) => messages.map(m => ({ ...m, key })));
-    return { buffer, rows };
+    let member={chats:{}};
+    try{const account=activeReaderAccount(root);member=optionalJson(path.join(root,'state/accounts',account.id||account.legacyId||'legacy','assistant-group-chat.json'),member);}catch{}
+    const rows = [buffer,member].flatMap(item=>Object.entries(item.chats??{}).flatMap(([key,messages])=>messages.map(m=>({...m,key}))));
+    return { buffer, rows,chatCount:new Set([...Object.keys(buffer.chats??{}),...Object.keys(member.chats??{})]).size };
   }
   async function getStatus() {
     if (statusPromise && Date.now() - statusTime < 3000) return statusPromise;
@@ -211,7 +220,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       ];
       const running = !!readerState || !!adapter || !!value(4);
       return { ready, running, services, lastError: safeText(adapter?.last_error ?? ''),
-        stats: { received: rows.filter(m => !m.outgoing).length, sent: rows.filter(m => m.outgoing).length, pending: rows.filter(m => !m.outgoing && !m.processed).length, chats: Object.keys(buffered().buffer.chats ?? {}).length },
+        stats: { received: rows.filter(m => !m.outgoing).length, sent: rows.filter(m => m.outgoing).length, pending: rows.filter(m => !m.outgoing && !m.processed).length, chats: buffered().chatCount },
         recent: rows.sort((a, b) => b.timestamp - a.timestamp).slice(0, 6).map(m => ({ key: m.key, name: m.conversation_name, text: m.text?.slice(0, 100), outgoing: m.outgoing, timestamp: m.timestamp })),
         ...optionalJson(preferenceFile), activeJob: activeJob ? jobs.get(activeJob) : null, latestJob: latestJob ? jobs.get(latestJob) : null, updatedAt: Date.now() };
     })();
@@ -365,14 +374,20 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       const url = new URL(req.url, origin);
       const route = url.pathname;
       if (req.method === 'GET' && !route.startsWith('/api/')) {
+        if(route==='/plugin-api.md'){res.writeHead(200,{'Content-Type':'text/plain; charset=utf-8','Content-Disposition':'attachment; filename="WeChatAgent-plugin-api-v2.md"','X-Content-Type-Options':'nosniff'});res.end(fs.readFileSync(path.join(projectRoot,'docs/PLUGIN_DEVELOPMENT.md')));return;}
+        if(route==='/plugin-example.zip'){const example=path.join(projectRoot,'examples/plugins/chat-notes');inspectPackage(example);res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="chat-notes-1.0.0.zip"','X-Content-Type-Options':'nosniff'});res.end(packZip(packageFiles(example)));return;}
+        if(route==='/plugin-packages/fish-notebook.zip'){const source=path.join(projectRoot,'optional-extensions/fish-notebook');inspectPackage(source);res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="fish-notebook-1.0.0.zip"','X-Content-Type-Options':'nosniff'});res.end(packZip(packageFiles(source)));return;}
         const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/console.css': ['console.css', 'text/css; charset=utf-8'], '/console.js': ['console.js', 'text/javascript; charset=utf-8'], '/persona-files.mjs': ['persona-files.mjs', 'text/javascript; charset=utf-8'], '/appearance.js': ['appearance.js', 'text/javascript; charset=utf-8'], '/appearance.css': ['appearance.css', 'text/css; charset=utf-8'], '/icons.svg': ['icons.svg', 'image/svg+xml'], '/app-icon.png': ['app-icon.png', 'image/png'], '/favicon.svg': ['app-icon.png', 'image/png'] };
         assets['/extension-market.js']=['extension-market.js','text/javascript; charset=utf-8'];assets['/extension-market.css']=['extension-market.css','text/css; charset=utf-8'];
+        assets['/plugins.js']=['plugins.js','text/javascript; charset=utf-8'];assets['/plugins.css']=['plugins.css','text/css; charset=utf-8'];
         assets['/external-links.js']=['external-links.js','text/javascript; charset=utf-8'];
         assets['/sticker-manager.js']=['sticker-manager.js','text/javascript; charset=utf-8'];assets['/sticker-manager.css']=['sticker-manager.css','text/css; charset=utf-8'];
         assets['/updates.js']=['updates.js','text/javascript; charset=utf-8'];
-        for(const file of ['workspace-layout.js','layout-model.mjs'])assets['/'+file]=[file,'text/javascript; charset=utf-8'];
+        for(const file of ['workspace-layout.js','layout-model.mjs','session-usage.js'])assets['/'+file]=[file,'text/javascript; charset=utf-8'];
         assets['/workspace-layout.css']=['workspace-layout.css','text/css; charset=utf-8'];
         assets['/assistant-feedback.js']=['assistant-feedback.js','text/javascript; charset=utf-8'];
+        assets['/memory-view.js']=['memory-view.js','text/javascript; charset=utf-8'];assets['/memory-view.css']=['memory-view.css','text/css; charset=utf-8'];
+        assets['/fish-notebook.js']=['fish-notebook.js','text/javascript; charset=utf-8'];assets['/fish-notebook.css']=['fish-notebook.css','text/css; charset=utf-8'];
         assets['/conversation-settings.mjs']=['conversation-settings.mjs','text/javascript; charset=utf-8'];
         assets['/dsh-catalog.mjs']=['dsh-catalog.mjs','text/javascript; charset=utf-8'];
         assets['/persona-delete.js']=['persona-delete.js','text/javascript; charset=utf-8'];
@@ -388,6 +403,10 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       if (req.headers['x-console-token'] !== csrf) throw fault('控制台连接已更新，请刷新页面。', 401);
       if(req.method==='GET'&&route==='/api/updates')return reply(200,await updates.check());
       if(req.method==='GET'&&route==='/api/assistant-feedback')return reply(200,feedbackSnapshot(root));
+      if(req.method==='GET'&&route==='/api/memory')return reply(200,memoryView.overview());
+      if(req.method==='GET'&&route==='/api/fish-notebook')return reply(200,fishNotebookSnapshot(root,snapshot(),url.searchParams));
+      if(req.method==='GET'&&route==='/api/memory/members')return reply(200,memoryView.members(url.searchParams));
+      if(req.method==='GET'&&route==='/api/memory/summaries')return reply(200,await memoryView.summaries(url.searchParams));
       if (req.method === 'GET' && route === '/api/config') return reply(200, { ...snapshot(), ...optionalJson(preferenceFile) });
       if(req.method==='GET'&&route==='/api/sticker-pool')return reply(200,await reader('/api/v1/stickers/pool-status'));
       if(req.method==='GET'&&route==='/api/sticker-manager')return reply(200,await stickerManager(''));
@@ -398,11 +417,18 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       }
       if(req.method==='GET'&&route==='/api/dsh-catalog'){const key=url.searchParams.get('conversationKey');if(key&&!allowedConversation(snapshot().config.wechat,key))throw fault('请先保存聊天范围。');return reply(200,await plugin('/dsh-catalog'+(key?'?conversationKey='+encodeURIComponent(key):'')));}
       if(req.method==='GET'&&route==='/api/meme-library-status'){try{return reply(200,await plugin('/meme-library/status'));}catch{return reply(200,{available:false,installed:false,reason:'DSH_PLUGIN_UNAVAILABLE'});}}
-      if(req.method==='GET'&&route==='/api/extensions'){const saved=snapshot();let connected=false;try{connected=!!(await plugin('/health')).ok;}catch{}return reply(200,builtinCatalog(saved.config,saved.revision,connected));}
+      if(req.method==='GET'&&(route==='/api/extensions'||route==='/api/plugins')){
+        const saved=snapshot();let connected=false,runtime=[],pluginApiReady=false,liveFeatures=[];
+        try{const health=await plugin('/health');connected=!!health.ok;pluginApiReady=health.pluginRuntime==='isolated-v2';liveFeatures=health.pluginHostFeatures??[];if(pluginApiReady)runtime=(await plugin('/extensions')).extensions??[];}catch{}
+        const catalog=pluginCatalog(root,runtime);
+        for(const item of catalog.plugins)if(item.enabled&&item.requiresHostFeatures.some(feature=>!liveFeatures.includes(feature))){item.loaded=false;item.active=false;item.reason='请准备配置并完整重开 DSH，加载此插件需要的新版宿主。';item.statusLabel='等待新版宿主';item.statusTone='warning';}
+        if(route==='/api/plugins')return reply(200,{...catalog,runtimeConnected:pluginApiReady});
+        return reply(200,{...builtinCatalog(saved.config,saved.revision,connected),plugins:catalog.plugins,pluginRevision:catalog.revision,pluginError:catalog.error??null,canInstallZip:true,pluginApiReady});
+      }
       if (req.method === 'GET' && route === '/api/deployment') {
         const distribution = optionalJson(path.join(root, 'config', 'distribution.json'));
         const readerSettings = optionalJson(path.join(root, 'state', 'weflow', 'WeFlow-config.json'));
-        return reply(200, { installed: !!distribution.installed, version: distribution.version ?? '0.4.0', configured: !!readerSettings.dbPath && !!readerSettings.myWxid && !!readerSettings.decryptKey && readerVerified(), pluginPath: path.join(root, 'packages', 'dsh-social-bridge-plugin') });
+        return reply(200, { installed: !!distribution.installed, version: distribution.version ?? '0.4.1', configured: !!readerSettings.dbPath && !!readerSettings.myWxid && !!readerSettings.decryptKey && readerVerified(), pluginPath: path.join(root, 'packages', 'dsh-social-bridge-plugin') });
       }
       if (req.method === 'GET' && route === '/api/status') return reply(200, await getStatus());
       if(req.method==='GET' && route==='/api/process-recovery'){
@@ -460,10 +486,23 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
       }
       if (req.method !== 'POST') throw fault('接口不存在。', 404);
       if (!req.headers['content-type']?.startsWith('application/json')) throw fault('请使用控制台表单。', 415);
-      const body = await readBody(req,route==='/api/sticker-manager/import'?11300000:128*1024);
+      const body = await readBody(req,['/api/sticker-manager/import','/api/plugins/inspect'].includes(route)?11300000:128*1024);
       if(route==='/api/updates/check')return reply(200,await updates.check({force:true}));
       if (route === '/api/jobs') return reply(202, startJob(body));
       assertIdle();
+      if(route==='/api/plugins/inspect')return reply(200,pluginInstaller.inspect(body));
+      if(route==='/api/plugins/install')return reply(200,pluginInstaller.install(body));
+      if(route==='/api/plugins/cancel')return reply(200,pluginInstaller.cancel(body.ticket));
+      const pluginRoute=/^\/api\/plugins\/([a-z][a-z0-9-]{0,39})(\/uninstall)?$/.exec(route);
+      if(pluginRoute){const result=pluginRoute[2]?archivePlugin(root,pluginRoute[1],body.revision):updatePlugin(root,pluginRoute[1],body);return reply(200,{ok:true,revision:result.revision});}
+      const pluginAction=/^\/api\/plugins\/([a-z][a-z0-9-]{0,39})\/actions\/([a-z][a-z0-9-]{0,19})$/.exec(route);
+      if(pluginAction){if(!allowedConversation(snapshot().config.wechat,body.key))throw fault('请选择已允许的聊天。',403);return reply(200,await plugin('/plugin-actions/'+pluginAction[1]+'/'+pluginAction[2],{conversationKey:body.key,args:body.args??{}}));}
+      if(route==='/api/fish-notebook/settings'||route==='/api/fish-notebook/write'){
+        const previous=snapshot(),params=new URLSearchParams({scope:String(body.scope??''),...(body.key?{conversationKey:body.key}:{})}),current=fishNotebookSnapshot(root,previous,params);
+        if(!current.available||!body.scope)throw fault('请先连接微信并刷新记事本。',409);
+        if(route==='/api/fish-notebook/write'){if(!current.effectiveEnabled)throw fault('请先安装并为此聊天启用鱼的记事本插件。');const result=await plugin('/fish-notebook/write',{conversationKey:current.conversationKey});if(!result.ok)throw fault('日记暂未写成，请确认 DSH 已加载新版插件宿主后重试。',503);return reply(200,{ok:true});}
+        throw fault('鱼的记事本已改为可选插件，请在插件配置中设置开关、时间和聊天范围。',410);
+      }
       if(['/api/sticker-manager/import','/api/sticker-manager/edit','/api/sticker-manager/delete'].includes(route))return reply(200,await stickerManager('/'+route.split('/').at(-1),body));
       if(/^\/api\/session-groups\/(create|rename|delete|move)$/.test(route))return reply(200,await plugin(route.slice('/api'.length),body));
       if(route==='/api/group-bindings'){
@@ -530,7 +569,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
         const config = validateConsoleConfig(body.config, root);
         if (Object.values(config.ports).includes(boundPort) || Number(new URL(config.hook.baseUrl).port || 80) === boundPort) throw fault('服务端口不能与当前控制台端口重复。');
         backup(configFile); atomic(configFile, config);
-        const withoutStickers=value=>{const copy=structuredClone(value);delete copy.wechat.stickers;delete copy.wechat.search;delete copy.wechat.webReader;delete copy.wechat.proactive;delete copy.wechat.context;delete copy.wechat.chatModes;delete copy.wechat.dshAccess;delete copy.wechat.memeLibrary;delete copy.wechat.assistant;return copy;};
+        const withoutStickers=value=>{const copy=structuredClone(value);delete copy.wechat.fishNotebook;delete copy.wechat.replyLayout;delete copy.wechat.stickers;delete copy.wechat.search;delete copy.wechat.webReader;delete copy.wechat.proactive;delete copy.wechat.context;delete copy.wechat.chatModes;delete copy.wechat.dshAccess;delete copy.wechat.memeLibrary;delete copy.wechat.assistant;return copy;};
         if(JSON.stringify(withoutStickers(previous.config))!==JSON.stringify(withoutStickers(config)))markPending(JSON.stringify(previous.config.dsh) !== JSON.stringify(config.dsh) || previous.config.ports.dshPlugin !== config.ports.dshPlugin);
         return reply(200, { ...snapshot(), ...optionalJson(preferenceFile) });
       }
@@ -628,6 +667,7 @@ export function createConsole({ root = projectRoot, port = 3210, runner, readerS
     };
     listen();
   });
+  server.on('close',()=>pluginInstaller.dispose());
   return { server, shutdown, isBusy: () => shuttingDown || !!activeJob || protectingCredential || processRecoveryBusy, close: () => { server.closeAllConnections(); server.close(); }, start };
 }
 

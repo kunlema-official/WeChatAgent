@@ -1,6 +1,6 @@
 {
   "name": "wechatagent",
-  "version": "0.5.0-preview.2",
+  "version": "0.5.0-preview.3",
   "private": true,
   "type": "module",
   "description": "Personal WeChat AI friend with NT reader, WeChat-Hook, OneBot v11 and an existing DSH Desktop",
@@ -49,7 +49,11 @@
     "test": "node --test scripts/test-*.mjs",
     "test:assistant-controller": "node --test scripts/test-assistant-controller.mjs scripts/test-assistant-mode.mjs scripts/test-assistant-access.mjs scripts/test-file-transfers.mjs scripts/test-assistant-feedback.mjs",
     "test:assistant-feedback": "node --test scripts/test-assistant-feedback.mjs",
-    "test:layout": "node --test scripts/test-workspace-layout.mjs scripts/test-extension-page.mjs"
+    "test:layout": "node --test scripts/test-workspace-layout.mjs scripts/test-extension-page.mjs",
+    "test:history": "node --test scripts/test-request-window.mjs scripts/test-window-reply-dedup.mjs scripts/test-history.mjs scripts/test-cost-next.mjs",
+    "history:cost": "node scripts/history-cost.mjs",
+    "test:plugins-v2": "node --test scripts/test-plugin-api.mjs scripts/test-fish-notebook-plugin.mjs",
+    "test:fish-notebook-plugin": "node --test scripts/test-fish-notebook-plugin.mjs"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",

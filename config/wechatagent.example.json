@@ -43,7 +43,8 @@
       "labelCache": true,
       "chats": {},
       "collectEnabled": true,
-      "shareEnabled": true
+      "shareEnabled": true,
+      "candidateLimit": 8
     },
     "search": {
       "enabled": false,
@@ -72,20 +73,6 @@
       "idleSeconds": 60,
       "chats": {}
     },
-    "voice": {
-      "enabled": false,
-      "chats": {},
-      "provider": "sensevoice-local",
-      "language": "zh",
-      "maxSeconds": 120,
-      "maxReplyChars": 120,
-      "ttsProvider": "mimo-v2.5-tts",
-      "ttsVoice": "冰糖",
-      "ttsStyle": "用自然、亲切、轻松的普通话说话，语速适中，像微信好友日常聊天，不要播报腔。",
-      "edgeVoice": "zh-CN-XiaoyiNeural",
-      "ttsRate": "+8%",
-      "ttsPitch": "+18Hz"
-    },
     "webReader": {
       "enabled": true
     },
@@ -95,6 +82,31 @@
     },
     "memberMemory": {
       "enabled": true,
+      "chats": {}
+    },
+    "history": {
+      "enabled": true,
+      "recentMessages": 8,
+      "recentChars": 4000,
+      "coldWakeMinutes": 30,
+      "summaryChars": 3200,
+      "summaryInputChars": 24000,
+      "maxSessionTurns": 32,
+      "maxSessionEvents": 1500,
+      "maxContextTokens": 20000,
+      "maxContextChars": 64000,
+      "maxAgeHours": 168,
+      "chats": {},
+      "mode": "window",
+      "restoreHistory": true,
+      "windowStrategy": "append"
+    },
+    "replyLayout": {
+      "maxMessages": 2
+    },
+    "fishNotebook": {
+      "enabled": false,
+      "writeTime": "21:30",
       "chats": {}
     }
   },

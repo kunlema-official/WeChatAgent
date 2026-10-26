@@ -12,13 +12,20 @@ export function validateAssistantSettings(wechat) {
       value.fileTransferChats !== undefined && (!plain(value.fileTransferChats) || Object.entries(value.fileTransferChats).some(([key,on]) => !/^wechat:(private|group):[1-9]\d{0,15}$/.test(key) || !Number.isSafeInteger(Number(key.split(':')[2])) || typeof on !== 'boolean')) ||
       value.adminOnlyGroups !== undefined && (!plain(value.adminOnlyGroups) || Object.entries(value.adminOnlyGroups).some(([key,on]) => !groupKey(key) || !Number.isSafeInteger(Number(key.split(':')[2])) || typeof on !== 'boolean'))) throw Error('助手模式管理员设置无效：请使用真实微信 ID，最多 50 位；群管理员模式必须为开关值。');
 }
-export const assistantAdminOnly = (wechat,key) => !groupKey(key) || wechat?.assistant?.adminOnlyGroups?.[key] !== false;
+// Kept for old settings/readers. Legacy false values never grant execution.
+export const assistantAdminOnly = () => true;
 export const assistantAdministrator = (wechat,wxid) => validWechatIdentity(wxid) && (wechat?.assistant?.administrators ?? []).includes(wxid);
 export function assistantSenderAllowed(wechat,key,wxid) {
   validateAssistantSettings(wechat);
   const match = /^wechat:(private|group):([1-9]\d{0,15})$/.exec(key);
   if (!match || !Number.isSafeInteger(Number(match[2])) || !(wechat?.whitelist?.[match[1] === 'group' ? 'groups' : 'private'] ?? []).some(id => String(id) === match[2])) return false;
-  return validWechatIdentity(wxid) && (!assistantAdminOnly(wechat,key) || assistantAdministrator(wechat,wxid));
+  return assistantAdministrator(wechat,wxid);
+}
+// A missing trusted identity may chat in an allowed group, but can never work.
+export function assistantGroupChatAllowed(wechat,key,wxid='') {
+  validateAssistantSettings(wechat);
+  const match=/^wechat:group:([1-9]\d{0,15})$/.exec(key);
+  return !!match&&Number.isSafeInteger(Number(match[1]))&&(wechat?.whitelist?.groups??[]).some(id=>String(id)===match[1])&&(wxid===''||validWechatIdentity(wxid));
 }
 // The authenticated reader supplies this identity. Never derive it from text,
 // a nickname, a quoted author or the model's claimed identity.

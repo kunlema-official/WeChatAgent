@@ -11,8 +11,10 @@ import { validateStickerSettings } from '../components/qq-bridge/src/core/sticke
 import { validateSearchSettings } from '../packages/dsh-social-bridge-plugin/search-policy.mjs';
 import {validateProactiveSettings} from '../components/qq-bridge/src/core/proactive-policy.js';
 import { validateContextSettings } from '../packages/dsh-social-bridge-plugin/context-policy.mjs';
+import {validateHistorySettings,migrateHistorySettings} from '../packages/dsh-social-bridge-plugin/history-policy.mjs';
 import { validateWebReaderSettings } from '../packages/dsh-social-bridge-plugin/web-reader-policy.mjs';
 import {validateMemeLibrarySettings} from '../packages/dsh-social-bridge-plugin/meme-library-policy.mjs';
+import {validateFishNotebook} from '../packages/dsh-social-bridge-plugin/fish-notebook-policy.mjs';
 import {validateMemberMemory} from '../packages/dsh-social-bridge-plugin/member-memory-policy.mjs';
 import { validateVoiceSettings } from '../packages/dsh-voice-plugin/voice-policy.mjs';
 
@@ -26,6 +28,8 @@ const write = (file, value) => {
   fs.renameSync(`${file}.tmp`, file);
 };
 export function validateConfig(config) {
+  validateFishNotebook(config.wechat?.fishNotebook);
+  validateHistorySettings(config.wechat?.history);
   validateMemberMemory(config.wechat?.memberMemory);
   validateVoiceSettings(config.wechat?.voice);
   validateMemeLibrarySettings(config.wechat?.memeLibrary);
@@ -67,17 +71,8 @@ export function prepare(root = projectRoot) {
   const configFile = path.join(root, 'config', 'wechatagent.json');
   if (!fs.existsSync(configFile)) fs.copyFileSync(path.join(root, 'config', 'wechatagent.example.json'), configFile);
   migrateConnections(root);
-  const config = read(configFile);
-  let voiceConfigMigrated = false;
-  if (!config.wechat.voice || typeof config.wechat.voice !== 'object' || Array.isArray(config.wechat.voice)) {
-    config.wechat.voice = { enabled: false, chats: {} };
-    voiceConfigMigrated = true;
-  } else if (!config.wechat.voice.chats || typeof config.wechat.voice.chats !== 'object' || Array.isArray(config.wechat.voice.chats)) {
-    config.wechat.voice.chats = {};
-    voiceConfigMigrated = true;
-  }
-  validateConfig(config);
-  if (voiceConfigMigrated) write(configFile, config);
+  const config = validateConfig(read(configFile));
+  if(migrateHistorySettings(config)){validateConfig(config);write(configFile,config);}
   const migratedMeme=migrateDshSettings(root,config);if(migratedMeme!==null){validateConfig(config);write(configFile,config);}
   const state = path.join(root, 'state');
   for (const dir of ['logs', 'weflow', 'attachments']) fs.mkdirSync(path.join(state, dir), { recursive: true });
@@ -107,8 +102,9 @@ export function prepare(root = projectRoot) {
     self_wxid: previousIo.self_wxid || '', onebot_ws_url: `ws://127.0.0.1:${config.ports.onebot}/ws` });
   const roleText = name => roleTexts.get(name);
   write(path.join(state, 'bridge-config.json'), {
+    project_root:root,
     platforms: { wechat: { enabled: true, adapter: 'wechat-onebot', onebot: { server: { host: '127.0.0.1', port: config.ports.onebot, path: '/ws', timeoutMs: 45000 } }, ...config.wechat } },
-    dsh_plugin: { url: `http://127.0.0.1:${config.ports.dshPlugin}`, timeoutMs: 125000 },
+    dsh_plugin: { url: `http://127.0.0.1:${config.ports.dshPlugin}`, timeoutMs: 190000 },
     sticker_policy_file: configFile,
     search_policy_file: configFile,
     search_state_file: path.join(state,'search/state.json'),
@@ -138,21 +134,15 @@ export function prepare(root = projectRoot) {
     const existingPatch=fs.readFileSync(patchFile,'utf8');
     const before=upsertAssistantPresetPatch(upsertToolCatalogPatch(existingPatch,root),root);
     let after = before.replace(/^(        provider:).*/m, `$1 ${JSON.stringify(config.dsh.provider)}`).replace(/^(        model:).*/m, `$1 ${JSON.stringify(config.dsh.model)}`);
-    const moduleDir=path.dirname(patchFile),sources=['file-tools.mjs','file-transfers.mjs','assistant-policy.mjs','plugin-catalog.mjs','work-modes.mjs','assistant-preset.mjs','local-policy.mjs','image-input.mjs','deadline.mjs','prompt-context.mjs','member-memory.mjs','member-memory-policy.mjs','meme-library.mjs','meme-library-policy.mjs','native-context.mjs','session-groups.mjs','conversation-policy.mjs','dsh-access.mjs','dsh-bundled.mjs','sticker-pool-review.mjs','dsh-migration.mjs','web-reader.mjs','web-reader-policy.mjs','web-reader-content.mjs','web-reader-fetch.mjs','web-reader-zxsj.mjs','skills/web-reader/skill.json','skills/web-reader/SKILL.md','skills/web-reader/references/quotes.md','skills/web-reader/references/video.md','model-search.mjs','dsh-search.mjs','search-provider.mjs','skills/search/skill.json','skills/search/SKILL.md','search-budget.mjs','search-policy.mjs','weather-query.mjs','weather-source.mjs','social-tool-policy.mjs','social-tool-restrict.mjs','context-policy.mjs'].map(name=>path.join(moduleDir,name));
-    const voiceDir=path.join(root,'packages','dsh-voice-plugin');
-    const voiceSources=['index.mjs','registry.mjs','voice-policy.mjs','voice-service.mjs','scripts/decode-wechat-voice.py','scripts/tts-silk.py'].map(name=>path.join(voiceDir,name));
-    if(voiceSources.every(file=>fs.existsSync(file))){
-      const digest=crypto.createHash('sha256');
-      for(const file of voiceSources){digest.update(path.relative(voiceDir,file));digest.update(fs.readFileSync(file));}
-      const voiceRevision=digest.digest('hex').slice(0,16);
-      const voiceEntry=pathToFileURL(path.join(voiceDir,'index.mjs')).href+'?wechatagent='+voiceRevision;
-      after=after.replace(/(    - id: dsh-voice-plugin\r?\n      name:).*/,'$1 '+JSON.stringify(voiceEntry));
-    }
+    const moduleDir=path.dirname(patchFile),sources=['fish-notebook.mjs','fish-notebook-policy.mjs','fish-notebook-store.mjs','memory-summary.mjs','reply-layout-policy.mjs','assistant-notifications.mjs','assistant-feedback.mjs','assistant-tasks.mjs','file-tools.mjs','file-transfers.mjs','assistant-policy.mjs','plugin-catalog.mjs','work-modes.mjs','assistant-preset.mjs','local-policy.mjs','image-input.mjs','deadline.mjs','prompt-context.mjs','member-memory.mjs','member-memory-policy.mjs','meme-library.mjs','meme-library-policy.mjs','native-context.mjs','session-groups.mjs','conversation-policy.mjs','dsh-access.mjs','dsh-bundled.mjs','sticker-pool-review.mjs','dsh-migration.mjs','web-reader.mjs','web-reader-policy.mjs','web-reader-content.mjs','web-reader-fetch.mjs','web-reader-zxsj.mjs','skills/web-reader/skill.json','skills/web-reader/SKILL.md','skills/web-reader/references/quotes.md','skills/web-reader/references/video.md','model-search.mjs','dsh-search.mjs','search-provider.mjs','skills/search/skill.json','skills/search/SKILL.md','search-budget.mjs','search-policy.mjs','weather-query.mjs','weather-source.mjs','social-tool-policy.mjs','social-tool-restrict.mjs','context-policy.mjs','history-policy.mjs','history-store.mjs','history-runtime.mjs','usage-summary.mjs','request-window.mjs'].map(name=>path.join(moduleDir,name));
+    for(const name of ['index.mjs','catalog.mjs','snapshots.mjs']){const file=path.join(root,'packages/extension-runtime',name);if(fs.existsSync(file))sources.push(file);}
     if(sources.every(file=>fs.existsSync(file))){
       const revision=crypto.createHash('sha256').update(Buffer.concat(sources.map(file=>fs.readFileSync(file)))).digest('hex').slice(0,16);
       // Revision inputs may grow or move; the Cordis plugin entry stays fixed.
       const entry=pathToFileURL(path.join(moduleDir,'native-context.mjs')).href+'?wechatagent='+revision;
       after=after.replace(/(    - id: dsh-social-bridge-plugin\r?\n      name:).*/,'$1 '+JSON.stringify(entry));
+      const restrictEntry=pathToFileURL(path.join(moduleDir,'social-tool-restrict.mjs')).href+'?wechatagent='+revision;
+      after=after.replace(/(          - id: social-tool-restrict\r?\n            name:).*/,'$1 '+JSON.stringify(restrictEntry));
     }
     after = /^        port:/m.test(after) ? after.replace(/^        port:.*/m, `        port: ${config.ports.dshPlugin}`) : after.replace(/^(        model:.*)$/m, `$1\n        port: ${config.ports.dshPlugin}`);
     if(migratedMeme&&Object.keys(migratedMeme).length&&!/^        memeSearch:/m.test(after))after=after.replace(/^(        port:.*)$/m,'$1\n        memeSearch: '+JSON.stringify(migratedMeme));

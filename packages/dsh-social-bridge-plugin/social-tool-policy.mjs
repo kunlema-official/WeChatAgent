@@ -1,5 +1,26 @@
 export const SOCIAL_TOOL_ISOLATION = 'approved-skills-with-history-retirement-v2';
 
+// Called only by the per-agent WeChat prompt-assembly hook. Preserve the
+// selected preset's operational rules and runtime/approval context. Do not
+// search chat messages, tools, or the owner's separate persona section.
+export function withoutDshIdentity(assembly) {
+  if(!Array.isArray(assembly?.sections))return assembly;
+  let changed=false;
+  const sections=assembly.sections.flatMap(section=>{
+    if(section?.name==='harness:identity'){changed=true;return [];}
+    if(section?.name!=='deployment:persona-prefix'||typeof section.text!=='string')return [section];
+    const text=section.text.replace(/^[\t \uFEFF]*(?:You are an AI agent powered by DeepSeek Harness\.|You are a coding agent powered by [^\r\n]+? model\.)[\t ]*(?:\r?\n)?/gim,'');
+    if(text===section.text)return [section];changed=true;return [{...section,text}];
+  });
+  return changed?{...assembly,sections}:assembly;
+}
+
+// Registration order can change after scoped tool reconciliation. Schema order
+// is part of the provider prefix; sorting never adds or authorizes a tool.
+export function canonicalSocialTools(tools) {
+  return [...tools].sort((left,right)=>left.name<right.name?-1:left.name>right.name?1:0);
+}
+
 // Tools registered in an Agent's own scope are deliberately not masked by
 // tools.restrict({ allow: [] }). Keep the social model-facing assembly scoped
 // as well as denying execution, including tools added by Host extensions.

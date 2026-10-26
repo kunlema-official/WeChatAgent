@@ -70,6 +70,11 @@ add('docs/ACCOUNT_SWITCH.md');
 add('docs/SESSION_GROUPS.md');
 add('scripts/persona-categories.mjs');
 add('docs/PERSONA_CATEGORIES.md');
+add('scripts/memory-console.mjs');
+add('scripts/memory-console-worker.mjs');
+add('docs/MEMORY_VIEW.md');
+add('scripts/fish-notebook-console.mjs');
+add('docs/FISH_NOTEBOOK.md');
 add('scripts/hook-client-health.ps1');
 add('scripts/stop-legacy-services.ps1');
 const scriptNames = ['wechat_files.py','file-delivery-worker.mjs','project-config.mjs','extension-status.mjs','bundled-extensions.mjs','update-check.mjs','migrate-io-config.mjs','manage.ps1','console-server.mjs','console-process.mjs','console-powershell.ps1','console-native.ps1','sync-weflow.cjs','hook-onebot.mjs','reader-api.py','reader-requirements.txt','wechat_media.py','wechat_sticker.py','wechat_sticker_send.py','wechat_forwarded.py','resolve-wechat-image.py','list-friend-ids.mjs','manage-dsh-sessions.mjs','launch-hook-wechat.ps1','pin-hook-client.ps1','launch-dsh.ps1','check-runtime.ps1','setup.ps1','build-hook.ps1'];
@@ -83,7 +88,7 @@ if (fs.existsSync(path.join(root, wxKeyDll))) {
 } else if (fs.existsSync(path.join(root, 'state/hook/wechat-4.1.10.27/Weixin.exe'))) {
   throw new Error('A full installer with a bundled WeChat client requires wx_key.dll. Refusing to create an incomplete full installer.');
 } else {
-  // This workflow builds an update-only package for an existing 0.4.0 workspace.
+  // This workflow builds an update-only package for an existing WeChatAgent workspace.
   // Do not delete or replace an existing workspace copy when the file is absent from source.
   console.log('Update-only build: wx_key.dll is not redistributed; the existing workspace copy is preserved.');
 }
@@ -92,6 +97,14 @@ for (const name of ['social-bridge.js','role-card.js','adapters/base-adapter.js'
 add('components/qq-bridge/LICENSE');
 add('components/qq-bridge/src/safe-fetch.js');
 addTree('packages/extension-runtime', (name, dir) => dir || /\.(mjs|md)$/.test(name));
+addTree('packages/plugin-api', (name, dir) => dir || /\.(mjs|md)$/.test(name));
+add('docs/PLUGIN_DEVELOPMENT.md');
+add('scripts/pack-plugin.mjs');
+addTree('examples/plugins/chat-notes',(name,dir)=>dir||/\.(mjs|json|md)$/.test(name));
+addTree('optional-extensions/fish-notebook',(name,dir)=>dir||/\.(mjs|json|md)$/.test(name));
+add('optional-extensions/packages/fish-notebook-1.0.0.zip');
+add('optional-extensions/packages/fish-notebook-1.0.0.zip.sha256');
+add('optional-extensions/packages/README.md');
 addTree('extensions/skills/meme-search', (name, dir) => dir || /\.(js|json|md)$/.test(name));
 fs.writeFileSync(path.join(project, 'components/qq-bridge/package.json'), JSON.stringify({ name:'wechatagent-social-bridge', type:'module', private:true, license:'MIT' })); files.push('components/qq-bridge/package.json');
 const bridgeFile = path.join(project, 'components/qq-bridge/src/social-bridge.js');
@@ -193,3 +206,4 @@ await build({ targets:Platform.WINDOWS.createTarget('nsis', Arch.x64), config: {
   compression:'normal', publish:null,
 } });
 console.log('Installer built in release/installer');
+

@@ -1,5 +1,6 @@
 import {formatAssistantTask} from '../../../../packages/dsh-social-bridge-plugin/assistant-tasks.mjs';
 import crypto from 'node:crypto';
+import path from 'node:path';
 import {MAX_RPC_BYTES} from '../../../../packages/dsh-social-bridge-plugin/local-policy.mjs';
 
 export class DshPluginClient {
@@ -10,6 +11,13 @@ export class DshPluginClient {
     }
     if (!token) throw new Error('SOCIAL_DSH_TOKEN is required');
     this.feedback=feedback;this.url = parsed.origin; this.token = token; this.timeoutMs = timeoutMs; this.log = log;
+  }
+
+  async connectionHealth({projectRoot,accountScope}={}){
+    const response=await fetch(this.url+'/health',{headers:{authorization:'Bearer '+this.token},signal:AbortSignal.timeout(2000)});
+    const health=await response.json();
+    const sameRoot=!projectRoot||typeof health.projectRoot==='string'&&path.resolve(health.projectRoot).toLowerCase()===path.resolve(projectRoot).toLowerCase();
+    return {ready:response.ok&&health.ok===true&&health.project==='WeChatAgent'&&health.contextMode==='native-session-v1'&&sameRoot&&(!accountScope||health.accountScope===accountScope),instanceId:health.instanceId,startedAt:health.instanceStartedAt};
   }
 
   async searchReady(){
@@ -32,10 +40,15 @@ export class DshPluginClient {
     if(persona!==undefined&&typeof persona!=='string')throw Object.assign(Error('DSH plugin: invalid_persona'),{admitted:false});
     const requestBody=JSON.stringify({...requestMetadata,...(persona===undefined?{}:{personaDigest:crypto.createHash('sha256').update(persona).digest('hex')}),conversationKey,message});
     if(Buffer.byteLength(requestBody,'utf8')>MAX_RPC_BYTES)throw Object.assign(Error('DSH plugin: request_too_large (REQUEST_TOO_LARGE)'),{code:'REQUEST_TOO_LARGE',admitted:false,limitBytes:MAX_RPC_BYTES});
-    const remoteAssistant=metadata.workMode==='assistant'&&await this.controllerReady();
-    const response = remoteAssistant ? await this.assistantFollowup(requestBody,metadata) : await fetch(`${this.url}/followup`, {
+    if(metadata.fishNotebookRequest){
+      try{const question=await fetch(this.url+'/fish-notebook/ask',{method:'POST',headers:{authorization:'Bearer '+this.token,'content-type':'application/json'},body:requestBody,signal:AbortSignal.timeout(45000)});if(question.status!==404){const result=await question.json();if(!question.ok)return 'RESPOND: 小本本这页暂时没有整理好，稍后再来看看吧。';if(result.handled){metadata.fishNotebookDocument=result.document===true;return String(result.text);}}}
+      catch{return 'RESPOND: 小本本这页还在整理，稍后再来看看吧。';}
+    }
+    const chatOnly=metadata.workMode==='assistant'&&metadata.assistantChatOnly===true;
+    const remoteAssistant=metadata.workMode==='assistant'&&!chatOnly&&await this.controllerReady();
+    const response = remoteAssistant ? await this.assistantFollowup(requestBody,metadata) : await fetch(`${this.url}/${chatOnly?'assistant-chat':'followup'}`, {
       method: 'POST', headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
-      body: requestBody, signal: AbortSignal.timeout((metadata.workMode==='assistant'?Math.max(this.timeoutMs,605000):this.timeoutMs) + (metadata.images?.length ? 80000 : 0)),
+      body: requestBody, signal: AbortSignal.timeout((metadata.workMode==='assistant'&&!chatOnly?Math.max(this.timeoutMs,605000):this.timeoutMs) + (metadata.images?.length ? 80000 : 0)),
     });
     const body = await response.json();
     if(!response.ok&&body.error==='agent_unavailable'&&body.detail==='session_busy'&&busyRetries>0){

@@ -48,7 +48,7 @@ test('retaining DSH leaves its history, external links, config and executable bi
 test('a DSH external-link failure can retry with retention without bypassing links in WeChatAgent data',async t=>{
  const f=fixture(t);f.cfg.runtime.dshDesktop=path.join(f.old,'runtimes/old/dsh/Harness.exe');f.write(path.join(f.sourceRoot,'config/wechatagent.json'),f.cfg);
  const outside=path.join(f.base,'external attachments');f.write(path.join(outside,'keep.txt'),'keep');fs.mkdirSync(f.dsh,{recursive:true});const link=path.join(f.dsh,'external');fs.symlinkSync(outside,link,process.platform==='win32'?'junction':'dir');
- const plan=migrationPlan(f.location,{legacyDshHome:f.dsh});await assert.rejects(prepareDataHome(plan,{checkIdle:async()=>{}}),error=>error.code==='DSH_EXTERNAL_LINK'&&error.message.includes(link)&&error.message.includes(fs.realpathSync(outside)));
+ const plan=migrationPlan(f.location,{legacyDshHome:f.dsh});const relativeLink=path.relative(f.base,link),relativeOutside=path.relative(f.base,outside),baseName=path.basename(f.base).toLowerCase();await assert.rejects(prepareDataHome(plan,{checkIdle:async()=>{}}),error=>error.code==='DSH_EXTERNAL_LINK'&&error.message.toLowerCase().includes(baseName)&&error.message.toLowerCase().includes(relativeLink.toLowerCase())&&error.message.toLowerCase().includes(relativeOutside.toLowerCase()));
  assert(!fs.existsSync(path.join(f.home,'.wechatagent-data.json')));assert(!fs.existsSync(path.join(f.home,'workspace')));
  assert((await prepareDataHome(retainDsh(plan),{checkIdle:async()=>{}})).migrated);
  const other=fixture(t),active=path.join(other.sourceRoot,'state/external');fs.symlinkSync(outside,active,process.platform==='win32'?'junction':'dir');
