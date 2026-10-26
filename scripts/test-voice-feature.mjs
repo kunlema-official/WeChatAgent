@@ -11,6 +11,8 @@ import { TextDeliveryStore } from './text-delivery-store.mjs';
 import { apply as applyVoicePlugin } from '../packages/dsh-voice-plugin/index.mjs';
 import { buildMimoTtsPayload, extractMimoWav, requestMimoWav } from '../packages/dsh-voice-plugin/voice-service.mjs';
 import { getVoiceService } from '../packages/dsh-voice-plugin/registry.mjs';
+import { chatSettingsSnapshot, applyChatSettings } from '../public/console/conversation-settings.mjs';
+import { effectiveChatFeature } from '../public/console/layout-model.mjs';
 
 const privateKey = 'wechat:private:123';
 const groupKey = 'wechat:group:456';
@@ -280,4 +282,56 @@ test('a TTS or native preflight failure falls back to text, but uncertain native
   const uncertain = await adapter.action({ action: 'send_private_msg', params: { user_id: 123, message: [{ type: 'wechat_voice', data: { text: '你好呀' } }] } });
   assert.equal(uncertain.status, 'failed');
   assert.equal(textSends, 1, 'an uncertain native submission must not trigger a duplicate text reply');
+});
+
+
+test('voice defaults remain off and per-chat overrides take precedence', () => {
+  const config = { wechat: { voice: { enabled: false, chats: {} } } };
+  assert.equal(effectiveChatFeature(config, privateKey, 'voice').enabled, false);
+  config.wechat.voice.enabled = true;
+  assert.equal(effectiveChatFeature(config, privateKey, 'voice').enabled, true);
+  config.wechat.voice.chats[privateKey] = false;
+  assert.equal(effectiveChatFeature(config, privateKey, 'voice').enabled, false);
+  config.wechat.voice.chats[privateKey] = true;
+  assert.equal(effectiveChatFeature(config, privateKey, 'voice').enabled, true);
+});
+
+test('per-chat voice settings round-trip through the validated conversation settings API', () => {
+  const config = {
+    wechat: {
+      whitelist: { private: ['123'], groups: [] },
+      voice: { enabled: false, chats: {} },
+      stickers: { chats: {} }, search: { chats: {} },
+      proactive: { chats: {} }, context: { chats: {} },
+      dshAccess: { chats: {} },
+    },
+    persona: { default: '默认人格', chats: {} },
+  };
+  const snapshot = chatSettingsSnapshot(config, privateKey);
+  assert.equal(snapshot.settings.voice, null, 'missing per-chat override inherits the account default');
+  const settings = { ...snapshot.settings, voice: true };
+  applyChatSettings(config, privateKey, settings, snapshot.access);
+  assert.equal(config.wechat.voice.chats[privateKey], true);
+  assert.equal(chatSettingsSnapshot(config, privateKey).settings.voice, true);
+  const disabled = { ...chatSettingsSnapshot(config, privateKey).settings, voice: false };
+  applyChatSettings(config, privateKey, disabled, chatSettingsSnapshot(config, privateKey).access);
+  assert.equal(config.wechat.voice.chats[privateKey], false);
+  const inherited = { ...chatSettingsSnapshot(config, privateKey).settings, voice: null };
+  applyChatSettings(config, privateKey, inherited, chatSettingsSnapshot(config, privateKey).access);
+  assert.equal(Object.hasOwn(config.wechat.voice.chats, privateKey), false);
+});
+
+test('console exposes account-default and per-chat voice controls, and the chat settings button is wired', () => {
+  const consoleJs = fs.readFileSync(new URL('../public/console/console.js', import.meta.url), 'utf8');
+  const workspace = fs.readFileSync(new URL('../public/console/workspace-layout.js', import.meta.url), 'utf8');
+  const example = fs.readFileSync(new URL('../config/wechatagent.example.json', import.meta.url), 'utf8');
+  assert.match(consoleJs, /chatSettingsSnapshot,mergeConversationSave/);
+  assert.match(consoleJs, /function openChatSettings\(key\)/);
+  assert.match(consoleJs, /button\.dataset\.chatSettings/);
+  assert.match(consoleJs, /name="' \+ name \+ '"/);
+  assert.match(consoleJs, /wechat\.voice\.enabled/);
+  assert.match(consoleJs, /cards\.voice/);
+  assert.match(workspace, /data-chat-settings=/);
+  assert.match(workspace, /\['voice','语音识别与回复'\]/);
+  assert.match(example, /"voice":\s*\{\s*"enabled":\s*false/s);
 });
