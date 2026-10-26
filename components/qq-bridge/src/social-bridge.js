@@ -19,6 +19,7 @@ import { ContextMaintenance } from './core/context-maintenance.js';
 import {HistoryStore} from '../../../packages/dsh-social-bridge-plugin/history-store.mjs';
 import {scopeHistory} from '../../../packages/dsh-social-bridge-plugin/work-modes.mjs';
 import {activeReaderAccount} from '../../../scripts/reader-account-state.mjs';
+import { voiceEnabledFor as isVoiceEnabledFor } from '../../../packages/dsh-voice-plugin/voice-policy.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const configPath = path.resolve(process.argv[2] ?? path.join(root, 'config.social.json'));
