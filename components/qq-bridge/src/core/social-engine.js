@@ -109,9 +109,9 @@ export class SocialEngine {
   constructor({ buffer, decide, send, roleFor = () => '', personaNameFor = () => '',workModeFor=()=> 'social', wakeWords = [], mode = 'hybrid',
     assistantBatchMs=650,assistantChatOnly=false,maxTextPartsFor=()=>2,notebookEnabledFor=()=>false,batchMs = 3000, minIntervalMs = 15000, privateMinIntervalMs = 1000,
     maxPerMinute = 3, maxPerTenMinutes = 10, stickerChoicesFor = async()=>[], sendSticker,
-    stickerPolicyFor=()=>({enabled:true,labelCache:true}),stickerLabelsFor=async()=>[],saveStickerLabels=async()=>{},
+    stickerPolicyFor=()=>({enabled:true,labelCache:true}),stickerLabelsFor=async()=>[],saveStickerLabels=async()=>{},voiceEnabledFor=()=>false,
     assistantAccess=()=>false,assistantControl,modeFor,searchFor=async()=>null,modelSearchReady=async()=>false,searchPolicyFor=()=>SEARCH_DEFAULTS,stickerSelect=selectStickerChoices,deliveryRetry={},connection=null,log = () => {} }) {
-    Object.assign(this, { buffer, decide, send, roleFor, personaNameFor,workModeFor, wakeWords, mode, batchMs,
+    Object.assign(this, { buffer, decide, send, roleFor, personaNameFor,workModeFor,voiceEnabledFor, wakeWords, mode, batchMs,
       minIntervalMs, privateMinIntervalMs, maxPerMinute, maxPerTenMinutes, log });
     if (![maxPerMinute,maxPerTenMinutes].every(value => Number.isSafeInteger(value) && value > 0)) throw new TypeError('Reply quotas must be positive integers');
     this.connection=connection;if(connection)connection.onBoundary=()=>this.suspendConnection();
@@ -400,8 +400,9 @@ export class SocialEngine {
       if(this.workModeFor(key)!==workMode)return;
       if(workMode==='assistant'&&(!rows.every(row=>this.assistantAllowed(key,row)))){this.buffer.markProcessed(key,throughId);this.decisions.delete(key);this.buffer.forgetReply(key);completed=true;this.log('[Assistant] '+key+' result_discarded reason=access_changed');return;}
       if(policy.enabled)for(const choice of metadata.memeChoices??[])if(choice.source==='dsh-meme'&&/^[a-f0-9]{64}$/.test(choice.id??'')&&cleanStickerLabel(choice)&&!stickerChoices.some(item=>item.id===choice.id))stickerChoices.push(choice);
+      const allowVoiceReply=(()=>{try{return this.voiceEnabledFor(key)===true;}catch{return false;}})();
       const resolved=!remembered&&chatRows.length
-        ? await resolveSocialDecision({rawOutput,key,metadata,decide:(...args)=>decideCurrent(...args),stickerRefs,allowStickerCaption:true,allowTextParts:metadata.fishNotebookDocument!==true,maxTextParts:metadata.replyMaxMessages??2,maxChars:workMode==='assistant'&&!this.assistantChatOnly?12000:1200,log:this.log})
+        ? await resolveSocialDecision({rawOutput,key,metadata,decide:(...args)=>decideCurrent(...args),stickerRefs,allowStickerCaption:true,allowTextParts:metadata.fishNotebookDocument!==true,maxTextParts:metadata.replyMaxMessages??2,maxChars:workMode==='assistant'&&!this.assistantChatOnly?12000:1200,allowVoiceReply,log:this.log})
         : {output:null,result:remembered?.result??{decision:'RESPOND',text:LOCKED_BEHAVIOR_REPLY}};
       const {output,result}=resolved;
       if(result.decision==='RESPOND'&&[result.text,...(result.textParts??[])].some(hasReasoningControl)){
