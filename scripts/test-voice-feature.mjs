@@ -7,6 +7,7 @@ import { voiceEnabledFor, validateVoiceSettings } from '../packages/dsh-voice-pl
 import { parseSocialDecision, resolveSocialDecision } from '../components/qq-bridge/src/core/decision-format.js';
 import { replyDeliveryParts } from '../components/qq-bridge/src/core/message-buffer.js';
 import { validateVoiceArtifact, HookOneBot } from './hook-onebot.mjs';
+import { WechatOneBotAdapter } from '../components/qq-bridge/src/adapters/wechat/wechat-onebot-adapter.js';
 import { TextDeliveryStore } from './text-delivery-store.mjs';
 import { apply as applyVoicePlugin } from '../packages/dsh-voice-plugin/index.mjs';
 import { buildMimoTtsPayload, extractMimoWav, requestMimoWav } from '../packages/dsh-voice-plugin/voice-service.mjs';
@@ -94,10 +95,46 @@ test('the production social bridge wires the verified per-chat voice policy into
   const bridge = fs.readFileSync(new URL('../components/qq-bridge/src/social-bridge.js', import.meta.url), 'utf8');
   assert.match(bridge, /import \{ voiceEnabledFor as isVoiceEnabledFor \} from '\.\.\/\.\.\/\.\.\/packages\/dsh-voice-plugin\/voice-policy\.mjs';/);
   assert.match(bridge, /voiceEnabledFor: key => \{[^}]*isVoiceEnabledFor\(current,key\)/);
+  assert.match(engine, /constructor\(\{ buffer, decide, send, sendVoice,/);
+  assert.match(engine, /Object\.assign\(this, \{ buffer, decide, send, sendVoice,/);
   assert.match(engine, /voiceEnabledFor=\(\)=>false/);
   assert.match(engine, /voiceEnabledFor,/);
   assert.match(engine, /allowVoiceReply,log:this\.log/);
   assert.match(engine, /this\.voiceEnabledFor\(key\)===true/);
+});
+
+test('the OneBot adapter submits native voice segments and preserves fallback and uncertain receipts', async t => {
+  const adapter = new WechatOneBotAdapter();
+  t.after(async () => adapter.stop());
+  let call;
+  adapter.server.action = async (action, params) => {
+    call = { action, params };
+    return { data: { receipt: 'wechat-server-id', delivered: 'database-confirmed', media_type: 'wechat-voice', message_id: 321 } };
+  };
+  const voice = await adapter.sendVoice({ kind: 'private', target: 123, text: '你好呀', deliveryId: 'a'.repeat(64) });
+  assert.equal(call.action, 'send_private_msg');
+  assert.equal(call.params.user_id, 123);
+  assert.deepEqual(call.params.message, [{ type: 'wechat_voice', data: { text: '你好呀' } }]);
+  assert.equal(call.params.wechatagent_delivery_id, 'a'.repeat(64));
+  assert.equal(voice.media_type, 'wechat-voice');
+  assert.equal(voice.receipt, 'wechat-server-id');
+  assert.equal(adapter.stats.sends, 1);
+
+  adapter.server.action = async () => ({ data: { receipt: 'wechat-server-id', delivered: 'database-confirmed', media_type: 'text-fallback', message_id: 322 } });
+  const fallback = await adapter.sendVoice({ kind: 'group', target: 456, text: '你好呀' });
+  assert.equal(fallback.media_type, 'text-fallback');
+  assert.equal(fallback.delivered, 'database-confirmed');
+  assert.equal(adapter.stats.sends, 2);
+
+  adapter.server.action = async () => { throw Object.assign(new Error('voice delivery unconfirmed'), { code: 'VOICE_DELIVERY_UNCONFIRMED', data: { attempted: true } }); };
+  const uncertainVoice = await adapter.sendVoice({ kind: 'private', target: 123, text: '稍等一下', deliveryId: 'b'.repeat(64) });
+  assert.equal(uncertainVoice.delivered, 'unconfirmed');
+  assert.equal(uncertainVoice.media_type, 'wechat-voice');
+
+  adapter.server.action = async () => { throw Object.assign(new Error('text delivery unconfirmed'), { code: 'TEXT_DELIVERY_UNCONFIRMED', data: { attempted: true } }); };
+  const uncertainFallback = await adapter.sendVoice({ kind: 'private', target: 123, text: '稍等一下', deliveryId: 'c'.repeat(64) });
+  assert.equal(uncertainFallback.delivered, 'unconfirmed');
+  assert.equal(uncertainFallback.media_type, 'text-fallback');
 });
 
 test('the model cannot force voice replies in chats where voice is disabled', () => {
