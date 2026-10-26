@@ -15,7 +15,7 @@ import { installExternalLinks } from './external-links.js';
 import { startUpdateUI } from './updates.js';
 import { createExtensionUI } from './extensions.js';
 import {createStickerManagerUI} from './sticker-manager.js';
-import {mergeConversationSave} from './conversation-settings.mjs';
+import {chatSettingsSnapshot,mergeConversationSave} from './conversation-settings.mjs';
 import {openProcessRecovery,needsWeChatRepair} from './process-recovery.js';
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -69,7 +69,7 @@ const actions = {
 const searchDefaults={enabled:false,cache:true,maxResults:3,maxSnippetChars:1200,maxSearchesPerTurn:1,timeoutMs:20000,cacheTtlSeconds:900};
 const proactiveDefaults={enabled:false,mode:'mixed',intervalMinutes:240,idleMinutes:120,startTime:'09:00',endTime:'22:00',useSearch:true,jitterMinutes:15};
 const contextDefaults={enabled:false,maxTokens:100000,idleSeconds:60};
-const getPath = (object, path) => {const value=path.split('.').reduce((value,key)=>value?.[key],object);if(value!==undefined)return value;if(path==='wechat.stickers.collectEnabled')return object.wechat?.stickers?.collectGroups??true;if(path==='wechat.stickers.shareEnabled')return object.wechat?.stickers?.shareGroups??true;if(['wechat.stickers.enabled','wechat.stickers.labelCache','wechat.stickers.collectGroups','wechat.stickers.shareGroups'].includes(path))return true;if(path==='wechat.replyLayout.maxMessages')return 2;if(path==='wechat.stickers.candidateLimit')return 8;if(path==='wechat.webReader.enabled')return true;if(path.startsWith('wechat.search.'))return searchDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.proactive.'))return proactiveDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.context.'))return contextDefaults[path.split('.').at(-1)];return value;};
+const getPath = (object, path) => {const value=path.split('.').reduce((value,key)=>value?.[key],object);if(value!==undefined)return value;if(path==='wechat.stickers.collectEnabled')return object.wechat?.stickers?.collectGroups??true;if(path==='wechat.stickers.shareEnabled')return object.wechat?.stickers?.shareGroups??true;if(['wechat.stickers.enabled','wechat.stickers.labelCache','wechat.stickers.collectGroups','wechat.stickers.shareGroups'].includes(path))return true;if(path==='wechat.replyLayout.maxMessages')return 2;if(path==='wechat.voice.enabled')return false;if(path==='wechat.stickers.candidateLimit')return 8;if(path==='wechat.webReader.enabled')return true;if(path.startsWith('wechat.search.'))return searchDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.proactive.'))return proactiveDefaults[path.split('.').at(-1)];if(path.startsWith('wechat.context.'))return contextDefaults[path.split('.').at(-1)];return value;};
 function syncExtensionProject(result,feature) {
   const previous=state.config, draft=state.draft;
   state.config=result.config;state.revision=result.revision;
@@ -328,11 +328,112 @@ function newRole() {
 function contextSettingsCard() {
   return `<section class="card context-settings">${header('上下文上限与自动压缩', '每个聊天独立统计，达到阈值后等待空闲再压缩。', '', 'history')}${toggle('启用空闲时自动压缩', 'wechat.context.enabled', '只作用于允许的聊天中的好友和群聊；沿用同一个会话，保留原始记录。')}<div class="form-grid space-top">${field('默认上下文阈值 / token', 'wechat.context.maxTokens', {type:'number',min:4000,max:2000000,step:1,help:'默认 100,000。按 DSH 当前有效上下文统计；是压缩触发阈值，正在回复时可能暂时超过。'})}${field('聊天至少空闲 / 秒', 'wechat.context.idleSeconds', {type:'number',min:15,max:3600,step:1,help:'默认 60 秒。没有待回复消息、模型运行或发送任务时才压缩。'})}</div><p class="subtle space-top">可在允许的聊天为单个聊天修改阈值，留空继承全局，填 0 关闭。每 30 秒检查，保存后生效。压缩会调用一次摘要模型；失败后等待重试，同一段未变化的上下文最多尝试 3 次。</p></section>`;
 }
+function openChatSettings(key) {
+  if (hasDraft()) return toast('请先保存或放弃其他未保存设置，再编辑单个聊天。');
+  if (!state.config || !state.revision) return toast('配置尚未加载，请稍后重试。');
+  if (!/^wechat:(?:private|group):\d+$/.test(key)) return toast('聊天标识无效，请刷新后重试。');
+  const group = key.startsWith('wechat:group:');
+  const triValue = value => value === null ? 'inherit' : value ? 'on' : 'off';
+  const selectField = (name, label, value, options, help = '') =>
+    '<div class="field"><label for="chat-setting-' + name + '">' + escapeHtml(label) + '</label>' +
+    '<select id="chat-setting-' + name + '" name="' + name + '">' +
+    options.map(([optionValue, optionLabel]) => '<option value="' + escapeHtml(optionValue) + '"' +
+      (String(optionValue) === String(value ?? '') ? ' selected' : '') + '>' + escapeHtml(optionLabel) + '</option>').join('') +
+    '</select>' + (help ? '<small>' + escapeHtml(help) + '</small>' : '') + '</div>';
+  const triField = (name, label, value, help, inheritLabel = '继承账号默认') =>
+    selectField(name, label, triValue(value), [['inherit', inheritLabel], ['on', '开启'], ['off', '关闭']], help);
+  const switchField = (name, label, checked, help) =>
+    '<div class="switch-row"><div><label for="chat-setting-' + name + '">' + escapeHtml(label) + '</label><p>' +
+    escapeHtml(help) + '</p></div><label class="switch-control"><input type="checkbox" role="switch" id="chat-setting-' +
+    name + '" name="' + name + '"' + (checked ? ' checked' : '') + '><span class="switch-track"></span></label></div>';
+  let current = chatSettingsSnapshot(state.config, key);
+  const render = snapshot => {
+    current = snapshot;
+    const settings = snapshot.settings;
+    const roleNames = [...new Set((state.roles ?? []).map(role => typeof role?.name === 'string' ? role.name : '').filter(Boolean))];
+    const personaOptions = [['', '继承默认人格（' + String(state.config.persona.default ?? '默认') + '）']];
+    if (settings.persona && !roleNames.includes(settings.persona)) roleNames.unshift(settings.persona);
+    personaOptions.push(...roleNames.map(name => [name, name]));
+    const defaultVoice = state.config.wechat.voice?.enabled === true;
+    const defaultWakeMode = state.config.wechat.wake_mode === 'mention' ? '唤醒后回复' : '自然参与';
+    const modeOptions = [['inherit', '继承账号默认（' + defaultWakeMode + '）'], ['hybrid', '自然参与'], ['mention', '唤醒后回复']];
+    const modeField = group ? selectField('mode', '群聊回复方式', settings.mode ?? 'inherit', modeOptions, '可为此群单独选择；留在继承状态会跟随账号默认。') : '';
+    const adminField = group ? switchField('adminOnly', '群聊助手模式仅管理员可执行任务', settings.adminOnly !== false, '仅影响助手模式；聊天模式的普通交流规则不变。') : '';
+    const contextValue = settings.context === null || settings.context === undefined ? '' : String(settings.context);
+    const html =
+      '<p class="modal-description">只修改此聊天。账号默认语音设置在“设置 → 聊天默认值”中管理；这里的单聊设置会覆盖账号默认。技能与工具授权保持不变。</p>' +
+      '<form id="chat-settings-form" novalidate><div class="form-grid">' +
+      selectField('workMode', '工作模式', settings.workMode, [['social', '聊天模式'], ['assistant', '助手模式']], '切换模式会载入该模式已保存的设置，并重置当前表单尚未保存的修改。') +
+      selectField('persona', '人格', settings.persona ?? '', personaOptions, '选择“继承默认人格”可跟随账号默认人格。') +
+      modeField +
+      triField('voice', '语音识别与回复', settings.voice, '启用后会处理此聊天收到的微信语音；语音回复需要可用的 MiMo API Key。合成时，待朗读文本会发送给小米 API。', '继承账号默认（当前' + (defaultVoice ? '开启' : '关闭') + '）') +
+      triField('stickers', '原生表情发送', settings.stickers, '继承账号默认，或只对此聊天开启 / 关闭。') +
+      triField('search', '联网搜索', settings.search, '继承账号默认，或只对此聊天开启 / 关闭。') +
+      switchField('proactive', '允许此聊天主动聊天', settings.proactive === true, '还需要在账号默认设置中开启主动聊天总开关。') +
+      '<div class="field"><label for="chat-setting-context">上下文阈值 / token</label><input id="chat-setting-context" name="context" type="number" min="0" max="2000000" step="1" value="' + escapeHtml(contextValue) + '"><small>留空继承默认；填 0 关闭；其他值为 4,000–2,000,000 token。</small></div>' +
+      switchField('fileTransfer', '允许此聊天收发文件', settings.fileTransfer === true, '仅在助手模式生效；单个文件最多 50 MB。') +
+      adminField +
+      '</div><div id="chat-settings-error" class="inline-error" role="alert"></div><div class="modal-actions"><button class="button" type="button" data-close>取消</button><button class="button primary" type="submit" id="chat-settings-save">保存此聊天</button></div></form>';
+    modal('设置此聊天', html);
+    const form = $('#chat-settings-form');
+    form.querySelector('[name="workMode"]').addEventListener('change', event => {
+      const nextMode = event.target.value;
+      if (nextMode !== current.settings.workMode) render(chatSettingsSnapshot(state.config, key, nextMode));
+    });
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const errorBox = $('#chat-settings-error');
+      const saveButton = $('#chat-settings-save');
+      if (!form.isConnected || saveButton.disabled) return;
+      errorBox.textContent = '';
+      const contextText = form.elements.context.value.trim();
+      const context = contextText === '' ? null : Number(contextText);
+      if (context !== null && (!Number.isSafeInteger(context) || (context !== 0 && (context < 4000 || context > 2000000)))) {
+        errorBox.textContent = '上下文阈值必须留空、填 0，或填写 4,000–2,000,000 之间的整数。';
+        return;
+      }
+      const readTri = name => form.elements[name].value === 'inherit' ? null : form.elements[name].value === 'on';
+      const nextSettings = {
+        persona: form.elements.persona.value || null,
+        workMode: form.elements.workMode.value,
+        adminOnly: group ? form.elements.adminOnly.checked : true,
+        fileTransfer: form.elements.fileTransfer.checked,
+        mode: group ? (form.elements.mode.value === 'inherit' ? null : form.elements.mode.value) : null,
+        stickers: readTri('stickers'),
+        search: readTri('search'),
+        proactive: form.elements.proactive.checked,
+        context,
+        voice: readTri('voice'),
+      };
+      saveButton.disabled = true;
+      try {
+        const result = await api('/api/chat-settings', { key, revision: state.revision, settings: nextSettings, access: structuredClone(current.access ?? { skills: [], tools: [] }) });
+        state.draft = mergeConversationSave(state.config, state.draft, result.config, key);
+        state.config = result.config;
+        state.revision = result.revision;
+        closeModal();
+        updateDraftUI();
+        await renderPage();
+        await refreshStatus();
+        const notes = [];
+        if (result.personaChanged) notes.push('人格变化需重启服务后应用');
+        if (result.workModeChanged && !result.modeReady) notes.push('工作模式已保存；请重启并应用');
+        toast(notes.length ? '此聊天设置已保存。' + notes.join('；') : '此聊天设置已保存并生效。');
+      } catch (error) {
+        if (errorBox.isConnected) errorBox.textContent = error.message;
+        if (saveButton.isConnected) saveButton.disabled = false;
+      }
+    });
+  };
+  render(current);
+}
+
 function settingsCards() { return {
   participation:`<section class="card">${header('群聊参与', '默认方式，可在允许的聊天为每个群单独选择。', '', 'chat')}<div id="behavior-mode">${modeSelector()}</div><div class="form-grid space-top">${field('唤醒词', 'wechat.wake_words', { transform: 'lines', help: '每行一个。群里识别这些文字后进入回复判断。', placeholder: '小助手' })}${field('账号昵称提示', 'account.nicknames', { transform: 'lines', help: '每行一个。填写账号在聊天中使用的昵称。' })}</div><div class="notice plain">${icon('info')}<span>“自然参与”也会判断普通群消息，选择沉默时仍可能调用模型。拍一拍回应继续使用原有规则。</span></div></section>`,
   admins:`<section class="card">${header('助手模式管理员', '名单属于当前微信账号；仅用于助手模式，聊天模式保持原规则。', '', 'person')}${field('管理员真实微信 ID', 'wechat.assistant.administrators', {transform:'lines',help:'每行一位，最多 50 位。建议从微信好友中选择；昵称及“我是管理员”等聊天文字不能授予权限。保存后生效，名单为空时群友仍可聊天，但无人能执行任务；私聊助手仍仅允许管理员。',placeholder:'wxid_xxxxxxxxxxxxxx'})}<div class="button-row"><button class="button" id="choose-assistant-admin">${icon('plus')}从微信好友选择</button></div><p class="subtle space-top">群聊助手向所有群友开放聊天，工具、技能、文件、联网与任务控制仅允许指定管理员。普通聊天与管理员任务使用独立上下文；原生权限和审批仍然生效。</p></section>`,
   rhythm:`<section class="card">${header('回复节奏', '控制消息合并、发送间隔与群聊频率。', '', 'sliders')}<div class="form-grid">${field('消息合并等待 / 秒', 'social.batch_ms', { type: 'number', transform: 'seconds', min: 0, max: 60, step: .1, help: '把短时间内收到的消息合并到同一轮判断。' })}${field('私聊回复最小间隔 / 秒', 'social.private_min_interval_ms', { type: 'number', transform: 'seconds', min: 0, max: 3600, step: .1 })}${field('群聊回复最小间隔 / 秒', 'social.min_interval_ms', { type: 'number', transform: 'seconds', min: 0, max: 3600, step: 1 })}${field('每分钟群回复上限 / 条', 'social.max_per_minute', { type: 'number', min: 1, max: 1000, step: 1 })}${field('每十分钟群回复上限 / 条', 'social.max_per_ten_minutes', { type: 'number', min: 1, max: 10000, step: 1 })}</div></section>`,
   proactive:`<section class="card">${header('按人设主动聊天', '让当前人格自然找话题或问候，不强迫每次开口。', '', 'chat')}${toggle('启用定时主动聊天', 'wechat.proactive.enabled', '总开关。还需在允许的聊天中逐个开启好友或群聊，默认不向任何聊天主动发送。')}${toggle('允许使用热点与新梗资料', 'wechat.proactive.useSearch', '仅在联网搜索对该聊天也开启时生效。资料不适合人设或无法取得时，改为问候或沉默。')}<div class="form-grid space-top"><div class="field full"><label for="field-proactive-mode">主动内容方向</label><select id="field-proactive-mode" data-path="wechat.proactive.mode">${[['mixed','问候、热点、新梗轮换'],['greeting','问候与生活关心'],['news','人设适合的实时热点'],['meme','人设适合的新梗 / meme']].map(([value,label])=>`<option value="${value}" ${getPath(state.draft,'wechat.proactive.mode')===value?'selected':''}>${label}</option>`).join('')}</select></div>${field('主动机会间隔 / 分钟','wechat.proactive.intervalMinutes',{type:'number',min:30,max:1440,step:1,help:'默认 240 分钟。启用后等待一个间隔，再开始考虑；模型可选择沉默。'})}${field('聊天至少安静 / 分钟','wechat.proactive.idleMinutes',{type:'number',min:5,max:1440,step:1,help:'默认 120 分钟。有新消息、待回复或正在发言时让路。'})}${field('允许开始时间 / 北京时间','wechat.proactive.startTime',{type:'time'})}${field('允许结束时间 / 北京时间','wechat.proactive.endTime',{type:'time'})}${field('随机延迟上限 / 分钟','wechat.proactive.jitterMinutes',{type:'number',min:0,max:60,step:1,help:'在间隔上增加少量随机延迟，使问候不总卡在同一时刻。'})}</div><p class="subtle">保存后一分钟内应用。沿用每个聊天当前的人设、关系和上下文；热点与梗不合适就不讲。避免重复话题和催促回复，好友明确要求不被主动打扰时暂停，直到其再次主动聊天。重启不会补发过期草稿。每个符合条件的主动机会可能调用一次模型，选择沉默也会产生模型消耗。</p></section>`,
+  voice:`<section class="card">${header('语音识别与回复', '默认关闭；建议先只为一个私聊单独开启。', '', 'chat')}${toggle('默认启用语音识别与语音回复', 'wechat.voice.enabled', '只对未单独覆盖此设置的允许聊天生效。开启可能触发本地语音识别；MiMo 合成会将待朗读文本发送给小米 API。') }<p class="subtle">推荐保持默认关闭，再到“聊天 → 选择好友 → 设置此聊天”中为单个私聊开启。语音识别还需要 DSH SenseVoice 服务；语音回复还需要有效的 MIMO_API_KEY。</p></section>`,
   reader:`<section class="card">${header('网页阅读', '模型默认具备网页阅读能力，无需导入或配置密钥。', '', 'search')}${toggle('网页阅读', 'wechat.webReader.enabled', '默认开启。发来公开链接并要求阅读、总结或分析时，模型会读取实际正文；独立于联网搜索开关，保存后生效。')}<p class="subtle">例如：总结这个网页：https://example.com 。每轮最多三页，每页最多 12,000 字符；需要登录、验证码或执行 JavaScript 的页面可能无法读取。网页资料会提交给当前模型，工具调用与后续总结会产生模型消耗。</p></section>`,
   search:`<section class="card">${header('联网搜索', '按需搜索，以每轮回复的次数上限控制；不设每日额度。', '', 'search')}${toggle('允许联网搜索', 'wechat.search.enabled', '模型结合当前问题和前文按需搜索，无需提供网址；普通闲聊不搜索。可在允许的聊天中为好友或群聊单独覆盖，保存后生效。')}${toggle('复用短期搜索缓存', 'wechat.search.cache', '相同问题复用摘要，天气与实时信息缓存最多两分钟。缓存命中不发起新的联网请求。')}<details class="technical-details"><summary>搜索次数、缓存与超时</summary><div class="form-grid space-top">${field('每轮回复最多搜索 / 次', 'wechat.search.maxSearchesPerTurn', {type:'number',min:1,max:3,step:1,help:'默认 1 次，限制模型调用本拓展的次数。直接调用 DSH 网页搜索；服务内部检索由 DSH 自身设置控制。新一轮回复重新计数。'})}${field('每轮搜索摘要最大长度 / 字符', 'wechat.search.maxSnippetChars', {type:'number',min:256,max:3000,step:1,help:'只提供截断后的摘要与来源，不把整篇网页反复放入上下文。'})}${field('搜索结果上限 / 条', 'wechat.search.maxResults', {type:'number',min:1,max:3,step:1})}${field('普通摘要缓存 / 秒', 'wechat.search.cacheTtlSeconds', {type:'number',min:60,max:3600,step:1})}${field('搜索超时 / 秒', 'wechat.search.timeoutMs', {type:'number',transform:'seconds',min:1,max:60,step:1,help:'默认 20 秒。DSH 原生搜索需要等待服务端返回；本次 DSH 搜索使用完整超时。已有较短设置可调整为 20–30 秒。'})}</div></details><p class="subtle">沿用当前模型与推理设置，不强制修改输出 token 参数。次数上限约束每轮搜索次数，单次模型消耗仍取决于模型和已有上下文。完整搜索摘要会在该轮完成后退出后续上下文。天气和热点也通过 DSH 网页搜索核实，缺少城市时会询问；直接调用 DSH 网页搜索，沿用当前账号及 DSH 搜索配置。服务不可用时明确返回原因。无需另外填写搜索密钥，DSH 登录和搜索服务需正常可用。网页正文读取失败不代表搜索失败。天气公共接口限个人及非商业使用。</p></section>`,
   media:`<section class="card">${header('图片与表情包', '普通图片继续从本机读取；以下选项仅影响表情包。', '', 'folder')}${toggle('允许从腾讯下载缺失的表情包', 'wechat.media.allowStickerCdn', '本机缓存缺失时，用白名单原消息提供的地址下载，并核验原消息摘要。')}${toggle('允许兼容旧版表情包地址', 'wechat.media.allowStickerCdnAlias', '将旧腾讯域名映射至兼容域名，仍使用 HTTPS 并核验摘要。')}</section>`
@@ -653,6 +754,7 @@ document.addEventListener('click', event => {
   if(button.dataset.addChatKind)return addChats(button.dataset.addChatKind);
   if(button.dataset.chatSelect){state.selectedChat=button.dataset.chatSelect;renderPage();return;}
   if(button.dataset.chatDetailTab){state.chatDetailTab=button.dataset.chatDetailTab;renderPage();return;}
+  if(button.dataset.chatSettings)return openChatSettings(button.dataset.chatSettings);
   if (button.dataset.kind) { state.chatKind = button.dataset.kind; renderPage(); return; }
   if (button.dataset.rebindGroup) return reconnectGroup(button.dataset.rebindGroup);
   if (button.dataset.role) { state.selectedRole = button.dataset.role; renderPage(); return; }
