@@ -2,6 +2,21 @@ name: Windows Voice Preview Installer
 
 on:
   workflow_dispatch:
+  push:
+    branches: [upgrade/0.4.1-voice-integration]
+    paths:
+      - 'apps/**'
+      - 'components/**'
+      - 'config/**'
+      - 'docs/**'
+      - 'examples/**'
+      - 'optional-extensions/**'
+      - 'packages/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/windows-voice-installer.yml'
   pull_request:
     branches: [main]
     paths:
@@ -116,7 +131,7 @@ jobs:
       - name: Upload update installer and verification
         uses: actions/upload-artifact@v4
         with:
-          name: WeChatAgent-0.5.0-preview.2-Windows-x64-voice-update
+          name: WeChatAgent-0.5.0-preview.3-Windows-x64-voice-update
           path: |
             release/installer/WeChatAgent-Voice-Update-*.exe
             release/installer/SHA256SUMS.txt
