@@ -330,7 +330,7 @@ test('console exposes account-default and per-chat voice controls, and the chat 
   assert.match(consoleJs, /button\.dataset\.chatSettings/);
   assert.match(consoleJs, /name="' \+ name \+ '"/);
   assert.match(consoleJs, /wechat\.voice\.enabled/);
-  assert.match(consoleJs, /cards\.voice/);
+  assert.match(workspace, /cards\.voice/);
   assert.match(workspace, /data-chat-settings=/);
   assert.match(workspace, /\['voice','语音识别与回复'\]/);
   assert.match(example, /"voice":\s*\{\s*"enabled":\s*false/s);
