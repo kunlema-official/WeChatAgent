@@ -89,6 +89,18 @@ test('voice settings accept MiMo and explicit Edge providers without storing an 
   assert.throws(() => validateVoiceSettings({ ttsVoice: 'unknown-voice' }), /Invalid TTS voice/);
 });
 
+test('the production social bridge wires the verified per-chat voice policy into decision parsing', () => {
+  const engine = fs.readFileSync(new URL('../components/qq-bridge/src/core/social-engine.js', import.meta.url), 'utf8');
+  const bridge = fs.readFileSync(new URL('../components/qq-bridge/src/social-bridge.js', import.meta.url), 'utf8');
+  assert.match(bridge, /import \{ voiceEnabledFor as isVoiceEnabledFor \} from '\.\.\/\.\.\/\.\.\/packages\/dsh-voice-plugin\/voice-policy\.mjs';/);
+  assert.match(bridge, /voiceEnabledFor: key => \{[^}]*isVoiceEnabledFor\(current,key\)/);
+  assert.match(engine, /voiceEnabledFor=\(\)=>false/);
+  assert.match(engine, /voiceEnabledFor,/);
+  assert.match(engine, /allowVoiceReply=\\?\\?\\?/) === undefined;
+  assert.match(engine, /allowVoiceReply,log:this\.log/);
+  assert.match(engine, /this\.voiceEnabledFor\(key\)===true/);
+});
+
 test('the model cannot force voice replies in chats where voice is disabled', () => {
   assert.deepEqual(parseSocialDecision('RESPOND_VOICE: 好呀，晚上见！'), { decision: 'INVALID', text: '' });
   assert.deepEqual(parseSocialDecision('RESPOND_VOICE: 好呀，晚上见！', {}, { allowVoiceReply: true }), {
