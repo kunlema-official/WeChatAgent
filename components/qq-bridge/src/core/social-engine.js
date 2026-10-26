@@ -106,12 +106,12 @@ export function replyCooldown(recent, now, { intervalMs, maxPerMinute, maxPerTen
 
 /** Batched social decisions; one in-flight decision per conversation. */
 export class SocialEngine {
-  constructor({ buffer, decide, send, roleFor = () => '', personaNameFor = () => '',workModeFor=()=> 'social', wakeWords = [], mode = 'hybrid',
+  constructor({ buffer, decide, send, sendVoice, roleFor = () => '', personaNameFor = () => '',workModeFor=()=> 'social', wakeWords = [], mode = 'hybrid',
     assistantBatchMs=650,assistantChatOnly=false,maxTextPartsFor=()=>2,notebookEnabledFor=()=>false,batchMs = 3000, minIntervalMs = 15000, privateMinIntervalMs = 1000,
     maxPerMinute = 3, maxPerTenMinutes = 10, stickerChoicesFor = async()=>[], sendSticker,
     stickerPolicyFor=()=>({enabled:true,labelCache:true}),stickerLabelsFor=async()=>[],saveStickerLabels=async()=>{},voiceEnabledFor=()=>false,
     assistantAccess=()=>false,assistantControl,modeFor,searchFor=async()=>null,modelSearchReady=async()=>false,searchPolicyFor=()=>SEARCH_DEFAULTS,stickerSelect=selectStickerChoices,deliveryRetry={},connection=null,log = () => {} }) {
-    Object.assign(this, { buffer, decide, send, roleFor, personaNameFor,workModeFor,voiceEnabledFor, wakeWords, mode, batchMs,
+    Object.assign(this, { buffer, decide, send, sendVoice, roleFor, personaNameFor,workModeFor,voiceEnabledFor, wakeWords, mode, batchMs,
       minIntervalMs, privateMinIntervalMs, maxPerMinute, maxPerTenMinutes, log });
     if (![maxPerMinute,maxPerTenMinutes].every(value => Number.isSafeInteger(value) && value > 0)) throw new TypeError('Reply quotas must be positive integers');
     this.connection=connection;if(connection)connection.onBoundary=()=>this.suspendConnection();
