@@ -349,6 +349,9 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
   assert.doesNotMatch(patch, /file:\/\/\/mnt\/data\/work\/preview\//, 'the checked-in DSH patch must be portable outside the build container');
   assert.match(patch, /name: dsh-voice-plugin\/index\.mjs/);
   assert.match(patch, /name: dsh-social-bridge-plugin\/native-context\.mjs/);
+  const workflow = fs.readFileSync(new URL('../.github/workflows/windows-voice-installer.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /Smoke-test portable SILK encode and decode/);
+  assert.match(workflow, /scripts\/test-voice-codec\.py/);
   const hook = fs.readFileSync(new URL('./native-hook/wechatagent_hook.cpp', import.meta.url), 'utf8');
   const buildHook = fs.readFileSync(new URL('./build-hook.ps1', import.meta.url), 'utf8');
   assert.match(hook, /server\.Post\("\/SendVoiceMsg", \[authorized,voiceAccountAllowed\]/);
