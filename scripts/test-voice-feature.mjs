@@ -9,6 +9,7 @@ import { parseSocialDecision, resolveSocialDecision } from '../components/qq-bri
 import { replyDeliveryParts } from '../components/qq-bridge/src/core/message-buffer.js';
 import { validateVoiceArtifact, HookOneBot } from './hook-onebot.mjs';
 import { WechatOneBotAdapter } from '../components/qq-bridge/src/adapters/wechat/wechat-onebot-adapter.js';
+import { ReverseOneBotServer } from '../components/qq-bridge/src/onebot/reverse-ws-server.js';
 import { TextDeliveryStore } from './text-delivery-store.mjs';
 import { apply as applyVoicePlugin } from '../packages/dsh-voice-plugin/index.mjs';
 import { buildMimoTtsPayload, extractMimoWav, requestMimoWav } from '../packages/dsh-voice-plugin/voice-service.mjs';
@@ -104,12 +105,30 @@ test('the production social bridge wires the verified per-chat voice policy into
   assert.match(engine, /this\.voiceEnabledFor\(key\)===true/);
 });
 
+test('reverse OneBot actions accept a bounded per-action timeout override', async () => {
+  const server = new ReverseOneBotServer({ timeoutMs: 45000 });
+  server.connected = true;
+  server.socket = { write(_frame, callback) { callback?.(); } };
+  const pending = server.action('send_private_msg', {}, { timeoutMs: 175000 });
+  const entry = [...server.pending.values()][0];
+  assert.equal(entry.timer._idleTimeout, 175000);
+  clearTimeout(entry.timer);
+  server.pending.clear();
+  void pending;
+  const clamped = server.action('send_private_msg', {}, { timeoutMs: 900000 });
+  const clampedEntry = [...server.pending.values()][0];
+  assert.equal(clampedEntry.timer._idleTimeout, 180000);
+  clearTimeout(clampedEntry.timer);
+  server.pending.clear();
+  void clamped;
+});
+
 test('the OneBot adapter submits native voice segments and preserves fallback and uncertain receipts', async t => {
   const adapter = new WechatOneBotAdapter();
   t.after(async () => adapter.stop());
   let call;
-  adapter.server.action = async (action, params) => {
-    call = { action, params };
+  adapter.server.action = async (action, params, options) => {
+    call = { action, params, options };
     return { data: { receipt: 'wechat-server-id', delivered: 'database-confirmed', media_type: 'wechat-voice', message_id: 321 } };
   };
   const voice = await adapter.sendVoice({ kind: 'private', target: 123, text: '你好呀', deliveryId: 'a'.repeat(64) });
@@ -117,6 +136,7 @@ test('the OneBot adapter submits native voice segments and preserves fallback an
   assert.equal(call.params.user_id, 123);
   assert.deepEqual(call.params.message, [{ type: 'wechat_voice', data: { text: '你好呀' } }]);
   assert.equal(call.params.wechatagent_delivery_id, 'a'.repeat(64));
+  assert.equal(call.options.timeoutMs, 175000, 'voice TTS plus native receipt needs a longer action deadline than text');
   assert.equal(voice.media_type, 'wechat-voice');
   assert.equal(voice.receipt, 'wechat-server-id');
   assert.equal(adapter.stats.sends, 1);
