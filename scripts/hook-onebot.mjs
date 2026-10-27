@@ -745,7 +745,7 @@ export class HookOneBot {
       const voiceId=String(payload.voice?.id??'');
       if(!/^[a-f0-9]{64}$/.test(voiceId))fail('VOICE_DESCRIPTOR_INVALID');
       const audio=await this.readerBytes('/api/v1/voices/'+voiceId);
-      const result=await this.dshRequest('/voice/transcribe',{conversationKey:'wechat:'+kind+':'+target,messageId:rawId,audioBase64:audio.toString('base64')},420000);
+      const result=await this.dshRequest('/voice/transcribe',{conversationKey:'wechat:'+kind+':'+target,messageId:rawId,audioBase64:audio.toString('base64')},600000);
       transcript=String(result?.text??'').trim().slice(0,4000);
       if(!transcript)fail('VOICE_TRANSCRIPT_EMPTY');
       this.status.last_error='';
