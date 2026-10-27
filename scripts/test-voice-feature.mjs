@@ -284,14 +284,18 @@ test('a compatible native Hook sends generated SILK once and confirms a type-34 
     assert.equal(route, '/voice/synthesize'); assert.equal(body.conversationKey, 'wechat:private:123');
     synthCalls++; return { path: file, bytes: audio.length, durationMs: 2500 };
   };
+  const gateStates = [];
   adapter.native = async (route, body) => {
+    if (route === '/Debug/VoiceSend') { gateStates.push(body.on); return { enabled: body.on, forceOn: body.on }; }
     assert.equal(route, '/SendVoiceMsg'); assert.equal(body.wxidorgid, 'wxid_fixture');
     assert.equal(body.str0Mode, 'bytes'); assert.equal(body.durationMs, 2500); nativeCalls++;
-    assert.equal(fs.existsSync(path.join(clientDirectory, 'hook-voice-send.on')), true, 'native voice gate is open during the one request');
+    assert.deepEqual(gateStates, [true], 'the native voice gate is open only for the one request');
+    assert.equal(fs.existsSync(path.join(clientDirectory, 'hook-voice-send.on')), false, 'new sends do not create a persistent marker');
     return { ret: 0 };
   };
   const first = await adapter.sendVoice('private', '123', '你好呀', 'c'.repeat(64), null);
-  assert.equal(fs.existsSync(path.join(clientDirectory, 'hook-voice-send.on')), false, 'one-shot native voice gate is removed after request');
+  assert.equal(fs.existsSync(path.join(clientDirectory, 'hook-voice-send.on')), false, 'no persistent voice marker is created');
+  assert.deepEqual(gateStates, [true, false], 'the in-memory gate is closed immediately after native submission');
   assert.equal(first.media_type, 'wechat-voice');
   assert.equal(first.receipt, 'wechat-server-id');
   assert.equal(first.message_id, 200, 'an unrelated outgoing voice must not satisfy this send receipt');
