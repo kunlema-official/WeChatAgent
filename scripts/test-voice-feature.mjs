@@ -388,8 +388,8 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
   assert.match(build, /\(dsh-social-bridge-plugin\|dsh-voice-plugin\)/);
   const patch = fs.readFileSync(new URL('../packages/dsh-social-bridge-plugin/cordis.patch.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(patch, /file:\/\/\/mnt\/data\/work\/preview\//, 'the checked-in DSH patch must be portable outside the build container');
-  assert.match(patch, /name: dsh-voice-plugin\/index\.mjs/);
-  assert.match(patch, /name: dsh-social-bridge-plugin\/native-context\.mjs/);
+  assert.match(patch, /name: ["']?dsh-voice-plugin\/index\.mjs/);
+  assert.match(patch, /name: ["']?dsh-social-bridge-plugin\/native-context\.mjs/);
   const workflow = fs.readFileSync(new URL('../.github/workflows/windows-voice-installer.yml', import.meta.url), 'utf8');
   assert.match(workflow, /Smoke-test portable SILK encode and decode/);
   assert.match(workflow, /scripts\/test-voice-codec\.py/);
