@@ -244,7 +244,7 @@ export class HookOneBot {
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
         const baseline=currentRows.map(row=>String(row.localId)).filter(id=>/^\d+$/.test(id));
-        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,checkedVoiceIds:[],
+        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,voiceDigest,checkedVoiceIds:[],
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
         this.textDeliveries.put(attempt); // Persist before submission; replay must never submit it twice.
         const reject=(code,nativeRet)=>{
@@ -423,7 +423,7 @@ export class HookOneBot {
         let checkedThisPass=0;
         for(const row of candidates){
           const candidateId=String(row.localId),serverId=String(row.serverId??'');
-          if(attempt.baseline.includes(candidateId)||!/^\\d{1,32}$/.test(serverId)||BigInt(serverId)<=0n)continue;
+          if(attempt.baseline.includes(candidateId)||!/^\d{1,32}$/.test(serverId)||BigInt(serverId)<=0n)continue;
           if(attempt.candidateId===candidateId&&attempt.receiptDigestVerified===true){
             attempt.state='confirmed';attempt.confirmedAt=Date.now();
             attempt.response={message_id:Number(row.localId),receipt:'wechat-server-id',delivered:'database-confirmed',media_type:'wechat-voice'};
