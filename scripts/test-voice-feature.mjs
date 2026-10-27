@@ -299,6 +299,7 @@ test('a compatible native Hook sends generated SILK once and confirms a type-34 
   assert.equal(first.media_type, 'wechat-voice');
   assert.equal(first.receipt, 'wechat-server-id');
   assert.equal(first.message_id, 200, 'an unrelated outgoing voice must not satisfy this send receipt');
+  assert.equal(fs.existsSync(file), false, 'the generated SILK file is deleted after the native request and receipt check');
   assert.equal(receiptChecks, 2, 'each candidate is checked once, and the exact audio digest is matched');
   assert.equal(synthCalls, 1); assert.equal(nativeCalls, 1);
   const second = await adapter.sendVoice('private', '123', '你好呀', 'c'.repeat(64), null);
