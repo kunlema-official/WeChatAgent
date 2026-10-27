@@ -298,31 +298,43 @@ export class HookOneBot {
     const marker = path.join(clientDirectory, 'hook-voice-send.on');
     try {
       if (fs.existsSync(marker)) {
-        if (!fs.statSync(marker).isFile()) throw new Error('marker is not a regular file');
-        // Preserve an explicit owner-managed gate; only remove markers this call creates.
-        return async () => {};
+        const markerStat = fs.lstatSync(marker);
+        if (!markerStat.isFile() || markerStat.isSymbolicLink()) {
+          throw new AdapterError('VOICE_SEND_GATE_MARKER_INVALID', { attempted: false });
+        }
+        const markerContent = fs.readFileSync(marker, 'utf8');
+        if (!markerContent.startsWith('Enabled for one WeChatAgent-authorized voice send.')) {
+          // A marker with other content is an explicit owner-managed persistent gate.
+          return async () => {};
+        }
+        // Remove only the one-shot marker created by the older adapter, and only
+        // after it has been stale long enough that another sender cannot own it.
+        if (Date.now() - markerStat.mtimeMs < 30000) {
+          throw new AdapterError('VOICE_SEND_GATE_BUSY', { attempted: false });
+        }
+        fs.unlinkSync(marker);
       }
-      fs.writeFileSync(marker, 'Enabled for one WeChatAgent-authorized voice send.\n', { flag: 'wx', mode: 0o600 });
-      return async () => { try { fs.unlinkSync(marker); } catch {} };
+    } catch (error) {
+      if (error instanceof AdapterError) throw error;
+      throw new AdapterError('VOICE_SEND_GATE_MARKER_CHECK_FAILED', { attempted: false });
+    }
+    // Use the authenticated in-memory switch for a single send. The native Hook
+    // expires this switch after 30 seconds even if this process crashes before
+    // it can close the gate; no new persistent marker is created.
+    try {
+      const opened = await this.native('/Debug/VoiceSend', { on: true }, account);
+      if (opened?.ok === false || (Number.isInteger(opened?.ret) && opened.ret !== 0)) throw new Error('native voice switch rejected');
+      let closed = false;
+      return async () => {
+        if (closed) return;
+        closed = true;
+        try {
+          const result = await this.native('/Debug/VoiceSend', { on: false }, account);
+          if (result?.ok === false || (Number.isInteger(result?.ret) && result.ret !== 0)) this.status.last_error = 'VOICE_SEND_GATE_CLOSE_FAILED';
+        } catch { this.status.last_error = 'VOICE_SEND_GATE_CLOSE_FAILED'; }
+      };
     } catch {
-      // Program Files and other protected client directories may not be writable. The
-      // voice-capable Hook also exposes a guarded in-memory switch; use it only as a
-      // one-shot fallback and always attempt to close it after this request.
-      try {
-        const opened = await this.native('/Debug/VoiceSend', { on: true }, account);
-        if (opened?.ok === false || (Number.isInteger(opened?.ret) && opened.ret !== 0)) throw new Error('native voice switch rejected');
-        let closed = false;
-        return async () => {
-          if (closed) return;
-          closed = true;
-          try {
-            const result = await this.native('/Debug/VoiceSend', { on: false }, account);
-            if (result?.ok === false || (Number.isInteger(result?.ret) && result.ret !== 0)) this.status.last_error = 'VOICE_SEND_GATE_CLOSE_FAILED';
-          } catch { this.status.last_error = 'VOICE_SEND_GATE_CLOSE_FAILED'; }
-        };
-      } catch {
-        throw new AdapterError('VOICE_SEND_GATE_UNAVAILABLE', { attempted: false });
-      }
+      throw new AdapterError('VOICE_SEND_GATE_UNAVAILABLE', { attempted: false });
     }
   }
   async sendVoice(kind,target,text,deliveryId,proactive) {
