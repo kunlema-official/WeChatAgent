@@ -4,7 +4,8 @@ import { createVoiceService } from './voice-service.mjs';
 import { registerVoiceService } from './registry.mjs';
 
 export const name = 'dsh-voice-plugin';
-export const inject = [];
+// Depend on the DSH speech service definition; provider readiness stays lazy.
+export const inject = ['speechToText'];
 
 export function apply(ctx, config = {}) {
   const packageRoot = path.dirname(fileURLToPath(import.meta.url));
