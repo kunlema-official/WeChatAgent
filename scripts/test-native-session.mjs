@@ -22,6 +22,32 @@ import {DshPluginClient} from '../components/qq-bridge/src/dsh/plugin-client.js'
 import {WechatOneBotAdapter} from '../components/qq-bridge/src/adapters/wechat/wechat-onebot-adapter.js';
 import {createAssistantNoticeDelivery} from '../components/qq-bridge/src/core/assistant-notice-delivery.js';
 
+async function listenEphemeral(server, attempts = 12) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await new Promise((resolve, reject) => {
+        const cleanup = () => {
+          server.removeListener('error', onError);
+          server.removeListener('listening', onListening);
+        };
+        const onError = error => { cleanup(); reject(error); };
+        const onListening = () => { cleanup(); resolve(); };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(0, '127.0.0.1');
+      });
+      return server.address().port;
+    } catch (error) {
+      lastError = error;
+      if (!['EACCES', 'EADDRINUSE'].includes(error?.code) || attempt === attempts - 1) throw error;
+      // Windows may reserve a dynamically selected port between CI jobs.
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  throw lastError;
+}
+
 const canonicalWindowsPath = value => path.resolve(value).replace(/^([a-z]:\\users\\)(?:runner~1|runneradmin)(\\appdata\\local\\temp\\)/i, '$1<user>$2').toLowerCase();
 test('fish notebook uses tool-free persona utilities and discloses only on the third distinct question without a native agent',async t=>{
  const f=await fixture(t),account='b'.repeat(64),viewer='c'.repeat(64),file=path.join(f.dir,'config/wechatagent.json');fs.mkdirSync(path.dirname(file),{recursive:true});fs.mkdirSync(path.join(f.dir,'state/weflow'),{recursive:true});fs.writeFileSync(path.join(f.dir,'state/weflow/active-account.json'),JSON.stringify({id:account,legacyId:account}));const settings={wechat:{whitelist:{private:['123'],groups:[]},fishNotebook:{enabled:true,writeTime:'23:59',chats:{}}}};fs.writeFileSync(file,JSON.stringify(settings));
@@ -234,7 +260,7 @@ test('native meme tools return only the current chat resource as authenticated R
     if(url.pathname==='/dsh-memes-api')return res.end(JSON.stringify({ok:true,memes:[{url:'/dsh-memes/a/memes/happy/a.gif',caption:'挥手',tag:'happy'}]}));
     if(url.pathname==='/api/v1/stickers/import'){assert.equal(body.conversationKey,key);selections++;return res.end(JSON.stringify({ready:true,admitted:false,pending:true,id,collection:'review-pending'}));}
     res.end(image);
-  });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close();});
+  });await listenEphemeral(server);t.after(()=>{server.closeAllConnections();server.close();});
   const port=server.address().port;fs.writeFileSync(path.join(f.dir,'state/wechat-io-config.json'),JSON.stringify({reader_base_url:'http://127.0.0.1:'+port,reader_token:'fixture'}));
   const runtime=await f.start({assistantMessages:[[{type:'text',text:'RESPOND: [STICKER:'+id+']'}]],beforeAssistant:async agent=>{
     const found=JSON.parse((await agent.registeredTools.get('wechat_meme_search').execute({query:'挥手'})).content);const selected=await agent.registeredTools.get('wechat_meme_select').execute({candidateId:found.candidates[0].candidateId});assert.equal(selected.isError,false);
@@ -550,7 +576,7 @@ test('account changes block the old DSH plugin and keep identical chat IDs in se
 test('a missing incoming sticker still completes a native turn and the following message can reply',async t=>{
   const f=await fixture(t),r=await f.start({assistantMessages:[[{type:'text',text:'RESPOND: 还在'}]]});
   const reader=http.createServer((_req,res)=>{res.writeHead(503,{'content-type':'application/json'});res.end(JSON.stringify({error:'IMAGE_STICKER_LOCAL_COPY_UNAVAILABLE'}));});
-  await new Promise(resolve=>reader.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>reader.close(resolve)));
+  await listenEphemeral(reader);t.after(()=>new Promise(resolve=>reader.close(resolve)));
   fs.writeFileSync(path.join(f.dir,'state/wechat-io-config.json'),JSON.stringify({reader_base_url:`http://127.0.0.1:${reader.address().port}`,reader_token:'fixture-token'}));
   const output=await r.request('/followup',{...info,message:'[表情包]',images:[{id:'a'.repeat(64),kind:'sticker'}]});
   assert.equal(output.text,'RESPOND: 还在');assert.equal((await r.request('/health')).pendingTurns,0);
@@ -961,7 +987,7 @@ test('busy agents cannot change profiles or retire their persona mid-turn',async
 test('image completion offloads after the native append publisher returns and never offloads twice',async t=>{
   const f=await fixture(t),r=await f.start(),id='b'.repeat(64),bytes=Buffer.from('fixture image');
   const server=http.createServer((req,res)=>{assert.equal(req.headers.authorization,'Bearer fixture-reader');res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({imageId:id,conversationKey:key,b64:bytes.toString('base64'),mime:'image/jpeg',sha256:crypto.createHash('sha256').update(bytes).digest('hex')}));});
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  await listenEphemeral(server);t.after(()=>new Promise(resolve=>server.close(resolve)));
   fs.mkdirSync(path.join(f.dir,'state'),{recursive:true});fs.writeFileSync(path.join(f.dir,'state/wechat-io-config.json'),JSON.stringify({reader_base_url:`http://127.0.0.1:${server.address().port}`,reader_token:'fixture-reader'}));
   const result=await r.request('/followup',{...info,message:'请看测试图片',images:[{id}]});
   const session=f.store.get(result.sessionId),events=session.snapshotEvents();
