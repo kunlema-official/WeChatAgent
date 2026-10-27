@@ -39,6 +39,10 @@ def main():
         silk = work / "roundtrip.silk"
         decoded = work / "decoded.wav"
         env = os.environ.copy()
+        # Child scripts emit Chinese diagnostics; force UTF-8 for pipes on Windows runners.
+        # Without this, the codec can succeed but its success log raises cp1252/charmap errors.
+        env["PYTHONIOENCODING"] = "utf-8:replace"
+        env["PYTHONUTF8"] = "1"
         env["WECHATAGENT_VOICE_TMP"] = str(work)
 
         rate = 24000
