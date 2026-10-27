@@ -184,6 +184,8 @@ test('format repair explicitly carries the trusted per-chat voice policy', async
 
 
 test('DSH plugin registers an optional voice service without making ASR mandatory at startup', async t => {
+  const pluginSource = fs.readFileSync(new URL('../packages/dsh-voice-plugin/index.mjs', import.meta.url), 'utf8');
+  assert.match(pluginSource, /export const inject = \['speechToText'\]/, 'the plugin must declare the DSH speech service dependency');
   const root = tempRoot(t);
   const providers = [{ id: 'sensevoice-local', preparation: { phase: 'ready' } }];
   const stt = { resolve: spec => spec, transcribe: async () => ({ text: 'ok' }), snapshot: () => ({ providers }) };
@@ -343,6 +345,10 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
   assert.match(build, /addTree\('packages\/dsh-voice-plugin'/);
   assert.match(build, /'setup-voice\.ps1','voice-requirements\.txt'/);
   assert.match(build, /\(dsh-social-bridge-plugin\|dsh-voice-plugin\)/);
+  const patch = fs.readFileSync(new URL('../packages/dsh-social-bridge-plugin/cordis.patch.yml', import.meta.url), 'utf8');
+  assert.doesNotMatch(patch, /file:\/\/\/mnt\/data\/work\/preview\//, 'the checked-in DSH patch must be portable outside the build container');
+  assert.match(patch, /name: dsh-voice-plugin\/index\.mjs/);
+  assert.match(patch, /name: dsh-social-bridge-plugin\/native-context\.mjs/);
   const hook = fs.readFileSync(new URL('./native-hook/wechatagent_hook.cpp', import.meta.url), 'utf8');
   const buildHook = fs.readFileSync(new URL('./build-hook.ps1', import.meta.url), 'utf8');
   assert.match(hook, /server\.Post\("\/SendVoiceMsg", \[authorized,voiceAccountAllowed\]/);
