@@ -975,9 +975,20 @@ test('image completion offloads after the native append publisher returns and ne
 
 test('a failed vision request offloads the bad image and the same session accepts later text without archiving',async t=>{
   let failed=true;const f=await fixture(t),r=await f.start({turnReason:()=>failed?'failed':'completed'}),id='a'.repeat(64),bytes=Buffer.from('fixture bad-for-provider image');
-  const server=http.createServer((_req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({imageId:id,conversationKey:key,b64:bytes.toString('base64'),mime:'image/png',sha256:crypto.createHash('sha256').update(bytes).digest('hex')}));});
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>{server.closeAllConnections();server.close();});
-  fs.writeFileSync(path.join(f.dir,'state/wechat-io-config.json'),JSON.stringify({reader_base_url:`http://127.0.0.1:${server.address().port}`,reader_token:'fixture'}));
+  // Stub only the reader endpoint. The test's own RPC server still uses the real
+  // fetch implementation; avoiding a second ephemeral listener removes a flaky
+  // Windows EACCES failure when the OS reserves the randomly selected port.
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(input,options)=>{
+    const url=new URL(typeof input==='string'?input:input.url);
+    if(url.pathname==='/api/v1/images/'+id){
+      assert.equal(options?.headers?.Authorization,'Bearer fixture');
+      return {ok:true,json:async()=>({imageId:id,conversationKey:key,b64:bytes.toString('base64'),mime:'image/png',sha256:crypto.createHash('sha256').update(bytes).digest('hex')})};
+    }
+    return originalFetch(input,options);
+  };
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  fs.writeFileSync(path.join(f.dir,'state/wechat-io-config.json'),JSON.stringify({reader_base_url:'http://127.0.0.1:1',reader_token:'fixture'}));
   const failure=await r.request('/followup',{...info,message:'图片请求',images:[{id}]},502);assert.equal(failure.error,'turn_failed');
   const session=f.store.get(failure.sessionId),image=session.snapshotEvents().find(e=>e.data.source?.socialImageIds);
   assert.equal(session.deriveEventMessage(image).content.find(b=>b.type==='image').offloaded,true);
