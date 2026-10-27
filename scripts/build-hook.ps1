@@ -80,6 +80,10 @@ function Replace-Checked([string]$File,[string]$Before,[string]$After) {
     if (-not $text.Contains($Before)) { throw ('Expected upstream code missing: ' + $File + ' :: ' + $Before) }
     [IO.File]::WriteAllText($File,$text.Replace($Before,$After),$encoding)
 }
+$voiceSendSource = Join-Path $build 'src\wx_send.cpp'
+Replace-Checked $voiceSendSource '        static std::atomic<bool> g_forceOn{ false };' "        static std::atomic<bool> g_forceOn{ false };`n        static std::atomic<uint64_t> g_forceOnUntil{ 0 };"
+Replace-Checked $voiceSendSource '            if (g_forceOn.load()) return true;' "            if (g_forceOn.load()) {`n                const uint64_t until = g_forceOnUntil.load();`n                if (until != 0 && GetTickCount64() < until) return true;`n                g_forceOn.store(false);`n                g_forceOnUntil.store(0);`n            }"
+Replace-Checked $voiceSendSource '        voicesend::g_forceOn.store(on);' "        if (on) {`n            voicesend::g_forceOnUntil.store(GetTickCount64() + 30000);`n            voicesend::g_forceOn.store(true);`n        } else {`n            voicesend::g_forceOn.store(false);`n            voicesend::g_forceOnUntil.store(0);`n        }"
 $inlineLoadBuildFile = Join-Path $build $inlineLoadRelative
 $inlineText = [IO.File]::ReadAllText($inlineLoadBuildFile)
 $startPattern = 'g_httpServer\s*->\s*Start\s*\(\s*"[^"]+"\s*,\s*g_StartPort\s*\)\s*;'
