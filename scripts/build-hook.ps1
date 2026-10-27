@@ -96,7 +96,7 @@ Write-Output ('Restricted ' + $startMatches.Count + ' HTTP server start call(s) 
 [IO.File]::WriteAllText($inlineLoadBuildFile, $inlineText, $encoding)
 Replace-Checked $inlineLoadBuildFile '#include "global.h"' "#include `"global.h`"`n#include `"deferred_init.h`""
 Replace-Checked $inlineLoadBuildFile 'if (g_WxVersion == 0) Patch_Revoke();' '    // WeChatAgent does not change message recall behavior.'
-Replace-Checked (Join-Path $build 'dllmain.cpp') 'HideModuleFromPEB(hModule);' '; /* WeChatAgent keeps the module visible for diagnostics. */'
+Replace-Checked (Join-Path $build 'dllmain.cpp') 'HideModuleFromPEB(hModule);' '{ /* WeChatAgent keeps the module visible for diagnostics. */ }'
 Replace-Checked (Join-Path $build 'dllmain.cpp') '#include "global.h"' "#include `"global.h`"`n#include `"deferred_init.h`""
 Replace-Checked (Join-Path $build 'dllmain.cpp') 'CustomInit(hModule);' 'ScheduleWeChatAgentInit(hModule);'
 Replace-Checked (Join-Path $build 'dllmain.cpp') '    if (ul_reason_for_call == DLL_PROCESS_ATTACH)' "    if (ul_reason_for_call == DLL_PROCESS_DETACH) { CancelWeChatAgentInit(); return TRUE; }`n    if (ul_reason_for_call == DLL_PROCESS_ATTACH)"
