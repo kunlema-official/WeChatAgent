@@ -14,7 +14,6 @@ import { selectStickerChoices, cleanStickerLabel, stickerPolicyKey } from './sti
 import { SOCIAL_OUTPUT_NOTICE, resolveSocialDecision, hasStickerControl, hasReasoningControl,hasReplyProtocolControl } from './decision-format.js';
 export { parseSocialDecision } from './decision-format.js';
 import {SEARCH_DEFAULTS,searchPolicyKey,searchQuery} from '../../../../packages/dsh-social-bridge-plugin/search-policy.mjs';
-import { VOICE_REPLY_ENABLED_NOTICE, VOICE_REPLY_DISABLED_NOTICE } from '../../../../packages/dsh-social-bridge-plugin/prompt-context.mjs';
 import {wakeContextHint} from '../../../../packages/dsh-social-bridge-plugin/request-window.mjs';
 import {verifiedAssistantSender} from '../../../../packages/dsh-social-bridge-plugin/assistant-policy.mjs';
 import {checkedReplyMessageLimit} from '../../../../packages/dsh-social-bridge-plugin/reply-layout-policy.mjs';
@@ -369,7 +368,6 @@ export class SocialEngine {
           prompt+='\n联网状态：'+(search?.message??reason)+'。本轮没有提供新搜索资料，不得声称已搜索或编造实时信息；仍可回答不依赖实时信息的部分。';
         }
       }
-      prompt+='\n'+(voiceReplyEnabled?VOICE_REPLY_ENABLED_NOTICE:VOICE_REPLY_DISABLED_NOTICE);
       const nativeSignature='';
       const signature=crypto.createHash('sha256').update(JSON.stringify([policyKey,searchKey,wakeMode,role,metadata.personaName,nativeSignature,workMode,voiceReplyEnabled])).digest('hex');
       if(savedRequest&&savedRequest.signature!==signature){this.buffer.forgetRequest(key);this.dirty.add(key);return;}
@@ -403,7 +401,7 @@ export class SocialEngine {
       if(this.workModeFor(key)!==workMode)return;
       if(workMode==='assistant'&&(!rows.every(row=>this.assistantAllowed(key,row)))){this.buffer.markProcessed(key,throughId);this.decisions.delete(key);this.buffer.forgetReply(key);completed=true;this.log('[Assistant] '+key+' result_discarded reason=access_changed');return;}
       if(policy.enabled)for(const choice of metadata.memeChoices??[])if(choice.source==='dsh-meme'&&/^[a-f0-9]{64}$/.test(choice.id??'')&&cleanStickerLabel(choice)&&!stickerChoices.some(item=>item.id===choice.id))stickerChoices.push(choice);
-      const allowVoiceReply=voiceReplyEnabled&&(()=>{try{return this.voiceEnabledFor(key)===true;}catch{return false;}})();
+      const allowVoiceReply=(()=>{try{return this.voiceEnabledFor(key)===true;}catch{return false;}})();
       const resolved=!remembered&&chatRows.length
         ? await resolveSocialDecision({rawOutput,key,metadata,decide:(...args)=>decideCurrent(...args),stickerRefs,allowStickerCaption:true,allowTextParts:metadata.fishNotebookDocument!==true,maxTextParts:metadata.replyMaxMessages??2,maxChars:workMode==='assistant'&&!this.assistantChatOnly?12000:1200,allowVoiceReply,log:this.log})
         : {output:null,result:remembered?.result??{decision:'RESPOND',text:LOCKED_BEHAVIOR_REPLY}};
