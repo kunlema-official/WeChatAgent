@@ -85,7 +85,7 @@ export async function requestMimoWav(text, {
   style = DEFAULT_TTS_STYLE,
   apiKey = process.env.MIMO_API_KEY,
   fetchImpl = globalThis.fetch,
-  timeoutMs = 120000,
+  timeoutMs = 100000,
 } = {}) {
   const key = String(apiKey ?? '').trim();
   if (!key) throw Object.assign(new Error('VOICE_MIMO_API_KEY_MISSING'), { code: 'VOICE_MIMO_API_KEY_MISSING' });
@@ -217,7 +217,7 @@ export function createVoiceService(ctx, root, pluginConfig = {}) {
     if (typeof stt.prepare === 'function') {
       try { void Promise.resolve(stt.prepare(providerId)).catch(() => {}); } catch { /* transcribe will report the provider error */ }
     }
-    const deadline = Date.now() + 180000;
+    const deadline = Date.now() + 300000;
     while (Date.now() < deadline && !disposed) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       const current = snapshot();
@@ -303,7 +303,7 @@ export function createVoiceService(ctx, root, pluginConfig = {}) {
         voice = MIMO_VOICES.has(requestedVoice) ? requestedVoice : DEFAULT_MIMO_VOICE;
         const wav = await synthesizeMimoWav(text, { voice, style: options.style ?? settings.ttsStyle ?? DEFAULT_TTS_STYLE });
         await fsp.writeFile(wavPath, wav, { flag: 'wx', mode: 0o600 });
-        const result = await runPython(wavEncoder, ['--in', wavPath, '--out', outputPath], 120000);
+        const result = await runPython(wavEncoder, ['--in', wavPath, '--out', outputPath], 30000);
         const metaLine = String(result.stdout ?? '').split(/\r?\n/).map(line => line.startsWith('JSON: ') ? line.slice(6) : '').find(Boolean);
         try { meta = metaLine ? JSON.parse(metaLine) : null; } catch { /* validate output file below */ }
       } else {
@@ -346,7 +346,7 @@ export function createVoiceService(ctx, root, pluginConfig = {}) {
       asrServiceAvailable: !!stt, asrProvider: String(settings.provider ?? DEFAULT_PROVIDER), asrProviderAvailable: !!provider,
       asrPhase: provider?.preparation?.phase ?? 'unknown', cacheEntries: cache.size,
       maxSilkBytes: MAX_SILK_BYTES, maxSeconds: Number(settings.maxSeconds ?? 120),
-      note: !stt ? 'Enable DSH speechToText/SenseVoice provider to activate ASR.' : !python.available ? 'Install voice dependencies with scripts/setup-voice.ps1.' : tts === 'mimo-v2.5-tts' && !mimoApiKeyConfigured ? 'Set MIMO_API_KEY in the Windows user environment, then restart WeChatAgent and DSH.' : '' };
+      note: !stt ? 'DSH speechToText service is unavailable; verify the supported DSH 0.2.x voice packages and restart DSH.' : !provider ? 'SenseVoice provider is not registered; verify the DSH experimental speech-to-text packages and restart DSH.' : !python.available ? 'Install or repair voice dependencies with scripts/setup-voice.ps1.' : tts === 'mimo-v2.5-tts' && !mimoApiKeyConfigured ? 'Set MIMO_API_KEY in the Windows user environment, then restart WeChatAgent and DSH.' : provider.preparation?.phase !== 'ready' && provider.preparation?.phase !== 'standby' ? 'SenseVoice is not prepared yet; the first enabled voice message may download and prepare the local model.' : '' };
     lastStatusAt = Date.now();
     return lastStatus;
   }
