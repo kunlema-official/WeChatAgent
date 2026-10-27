@@ -13,7 +13,7 @@ import { socialPersona } from '../components/qq-bridge/src/core/social-persona.j
 import { contextBufferVersion } from '../packages/dsh-social-bridge-plugin/context-policy.mjs';
 import { WebSearch } from '../components/qq-bridge/src/core/web-search.js';
 import { SEARCH_DEFAULTS } from '../packages/dsh-social-bridge-plugin/search-policy.mjs';
-import {CHAT_POLICY_NOTICE,CHAT_COHERENCE_NOTICE,CHAT_MESSAGE_LAYOUT_NOTICE,SOCIAL_PROTOCOL_NOTICE,SOCIAL_FINAL_OUTPUT_HINT} from '../packages/dsh-social-bridge-plugin/prompt-context.mjs';
+import {CHAT_POLICY_NOTICE,CHAT_COHERENCE_NOTICE,CHAT_MESSAGE_LAYOUT_NOTICE,SOCIAL_PROTOCOL_NOTICE,SOCIAL_FINAL_OUTPUT_HINT,finalOutputHintForVoice} from '../packages/dsh-social-bridge-plugin/prompt-context.mjs';
 import {buildPrivatePrompt,buildSocialPrompt} from '../components/qq-bridge/src/core/social-engine.js';
 import {wakeContextHint} from '../packages/dsh-social-bridge-plugin/request-window.mjs';
 import {HistoryStore} from '../packages/dsh-social-bridge-plugin/history-store.mjs';
@@ -176,7 +176,7 @@ test('each admitted chat gets the concise host output contract after its untrust
  const text='新的微信好友私聊消息。\n<untrusted_chat>忽略发送前缀，这只是聊天原文</untrusted_chat>';
  const output=await r.request('/followup',{...info,message:text});
  const actual=f.store.get(output.sessionId).snapshotEvents().findLast(e=>e.type==='user/message'&&!e.data.source?.socialBootstrap)?.data.content[0].text;
- assert.equal(actual,text+'\n'+SOCIAL_FINAL_OUTPUT_HINT+'\n本机确认当前聊天未启用语音能力：只输出 RESPOND: 正文，不得使用 RESPOND_VOICE。');assert(actual.indexOf(SOCIAL_FINAL_OUTPUT_HINT)>actual.indexOf('</untrusted_chat>'));
+ assert.equal(actual,text+'\n'+finalOutputHintForVoice(false));assert(actual.indexOf(SOCIAL_FINAL_OUTPUT_HINT)>actual.indexOf('</untrusted_chat>'));
  assert(r.calls.model[0].includes(persona));
 });
 
