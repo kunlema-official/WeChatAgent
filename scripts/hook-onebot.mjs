@@ -244,7 +244,7 @@ export class HookOneBot {
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
         const baseline=currentRows.map(row=>String(row.localId)).filter(id=>/^\d+$/.test(id));
-        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,voiceDigest,checkedVoiceIds:[],
+        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
         this.textDeliveries.put(attempt); // Persist before submission; replay must never submit it twice.
         const reject=(code,nativeRet)=>{
@@ -385,7 +385,7 @@ export class HookOneBot {
         // The upstream Hook intentionally defaults voice sending off. Open its
         // marker only for this already-authorized, single native request.
         closeVoiceGate=await this.openVoiceSendGate(identity.account);
-        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,
+        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,checkedVoiceIds:[],
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
         this.textDeliveries.put(attempt); // Persist before native submission; never blindly resend an uncertain voice.
         let accepted;
