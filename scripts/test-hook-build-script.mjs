@@ -59,4 +59,6 @@ test('native voice send and switch endpoints are authenticated and account check
   assert.match(native, /VoiceSendSetEnabled\(data\["on"\]\.get<bool>\(\)\)/);
   assert.match(native, /WeixinSend::SendVoice\(target,filename/);
   assert.match(native, /SILK audio/);
+  assert.match(buildScript, /g_forceOnUntil/);
+  assert.match(buildScript, /GetTickCount64\(\) \+ 30000/);
 });
