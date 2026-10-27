@@ -115,11 +115,13 @@ export class ReverseOneBotServer extends EventEmitter {
     catch (error) { this.emit('invalid', `event_handler_failed:${error?.message ?? error}`); }
   }
 
-  action(action, params) {
+  action(action, params, options = {}) {
     if (!this.socket || !this.connected) return Promise.reject(new Error('OneBot disconnected'));
     const echo = crypto.randomUUID();
+    const requestedTimeout = Number.isSafeInteger(options?.timeoutMs) ? options.timeoutMs : this.config.timeoutMs;
+    const timeoutMs = Math.max(1000, Math.min(180000, requestedTimeout));
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(echo); reject(new Error(`OneBot action timeout: ${action}`)); }, this.config.timeoutMs);
+      const timer = setTimeout(() => { this.pending.delete(echo); reject(new Error(`OneBot action timeout: ${action}`)); }, timeoutMs);
       this.pending.set(echo, { resolve, reject, timer });
       this.socket.write(frame(1, JSON.stringify({ action, params, echo })), (error) => {
         if (error && this.pending.delete(echo)) { clearTimeout(timer); reject(error); }
