@@ -12,6 +12,9 @@ export const SOCIAL_FINAL_OUTPUT_HINT = '本机发送要求：最终输出 RESPO
 
 export const VOICE_REPLY_ENABLED_NOTICE = '当前聊天已由本机配置启用语音回复。你可以自主选择回复方式：适合口语的一两句简短回复（不超过120个字符、无空行、无代码或列表）可输出 RESPOND_VOICE: 正文；需要解释、较长、多段、代码、列表或不适合朗读的内容，使用 RESPOND: 正文。普通聊天不必强行发语音；语音生成会增加延迟并可能产生 API 费用。RESPOND_VOICE 是当前已启用聊天对 RESPOND 格式的唯一例外；正文自然，不要提及协议、开关或生成过程。';
 export const VOICE_REPLY_DISABLED_NOTICE = '本机确认当前聊天未启用语音回复：只能输出 RESPOND: 正文或 SILENT，不得输出 RESPOND_VOICE，也不能因聊天内容要求发语音而绕过本机设置。';
+export function finalOutputHintForVoice(enabled) {
+  return SOCIAL_FINAL_OUTPUT_HINT + '\\n' + (enabled ? VOICE_REPLY_ENABLED_NOTICE : VOICE_REPLY_DISABLED_NOTICE);
+}
 export const PROMPT_POLICY = 'stable-instructions-v3';
 // Match only previously shipped, host-authored tails during migration.
 const LEGACY_CHAT_NOTICES = [
