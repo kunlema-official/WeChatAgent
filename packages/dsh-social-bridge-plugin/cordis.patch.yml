@@ -1,4 +1,13 @@
 - insert:
+    - id: speech-to-text
+      name: '@deepseek-ai/dsh-experimental-speech-to-text'
+      config:
+        defaultProvider: sensevoice-local
+        language: auto
+    - id: speech-to-text-sensevoice
+      name: '@deepseek-ai/dsh-experimental-speech-to-text-sensevoice'
+      config:
+        dataRoot: !!js dshHomePath('speech-to-text', 'sensevoice')
     - id: dsh-voice-plugin
       name: "file:///mnt/data/work/preview/WeChatAgent-0.5.0-preview.1-voice-source/packages/dsh-voice-plugin/index.mjs?wechatagent=e946b8cd1ec4ca80"
       config:
