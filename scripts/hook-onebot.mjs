@@ -366,6 +366,7 @@ export class HookOneBot {
     this.voiceSending=true;
     this.targetsSending.add(key);
     let asciiCopy='';
+    let generatedArtifactPath='';
     let closeVoiceGate=()=>{};
     try {
       this.reload();
@@ -388,6 +389,7 @@ export class HookOneBot {
           throw new AdapterError(/^VOICE_[A-Z0-9_]{3,80}$/.test(code)?code:'VOICE_TTS_FAILED',{attempted:false});
         });
         const artifact=validateVoiceArtifact(this.directory,synthesis);
+        generatedArtifactPath=artifact.path;
         const voiceDigest=crypto.createHash('sha256').update(fs.readFileSync(artifact.path)).digest('hex');
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
@@ -395,7 +397,7 @@ export class HookOneBot {
         const sendFile=this.asciiVoiceSendPath(artifact.path);
         if(sendFile.cleanup)asciiCopy=sendFile.path;
         // The upstream Hook intentionally defaults voice sending off. Open its
-        // marker only for this already-authorized, single native request.
+        // expiring in-memory switch only for this already-authorized native request.
         closeVoiceGate=await this.openVoiceSendGate(identity.account);
         attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,checkedVoiceIds:[],
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
@@ -470,6 +472,7 @@ export class HookOneBot {
     } finally {
       await closeVoiceGate();
       if(asciiCopy)try{fs.unlinkSync(asciiCopy);}catch{}
+      if(generatedArtifactPath)try{fs.unlinkSync(generatedArtifactPath);}catch{}
       this.targetsSending.delete(key);
       this.voiceSending=false;
     }
