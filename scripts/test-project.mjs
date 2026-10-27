@@ -17,6 +17,7 @@ try {
   fs.copyFileSync(path.join(projectRoot, 'config', 'wechatagent.example.json'), path.join(fixture, 'config', 'wechatagent.example.json'));
   fs.writeFileSync(path.join(fixture, 'roles', `${example.persona.default}.md`), '# Test role');
   const fixturePlugin=path.join(fixture,'packages/dsh-social-bridge-plugin');fs.mkdirSync(fixturePlugin,{recursive:true});
+  fs.cpSync(path.join(projectRoot,'packages','dsh-voice-plugin'),path.join(fixture,'packages','dsh-voice-plugin'),{recursive:true});
   for(const file of ['plugin-catalog.mjs','work-modes.mjs','assistant-preset.mjs','image-input.mjs','deadline.mjs','local-policy.mjs'])fs.copyFileSync(path.join(projectRoot,'packages/dsh-social-bridge-plugin',file),path.join(fixturePlugin,file));
   for(const file of ['cordis.patch.yml','native-context.mjs','session-groups.mjs','prompt-context.mjs','member-memory.mjs','member-memory-policy.mjs','meme-library.mjs','meme-library-policy.mjs','model-search.mjs','dsh-access.mjs','file-tools.mjs','file-transfers.mjs','assistant-policy.mjs','conversation-policy.mjs','dsh-bundled.mjs','sticker-pool-review.mjs','dsh-migration.mjs','dsh-search.mjs','search-provider.mjs','search-budget.mjs','search-policy.mjs','weather-query.mjs','weather-source.mjs','social-tool-policy.mjs','social-tool-restrict.mjs','context-policy.mjs','history-policy.mjs','history-store.mjs','history-runtime.mjs','usage-summary.mjs','request-window.mjs'])fs.copyFileSync(path.join(projectRoot,'packages/dsh-social-bridge-plugin',file),path.join(fixturePlugin,file));
   for(const file of ['web-reader.mjs','web-reader-policy.mjs','web-reader-fetch.mjs','web-reader-content.mjs','web-reader-zxsj.mjs'])fs.copyFileSync(path.join(projectRoot,'packages/dsh-social-bridge-plugin',file),path.join(fixturePlugin,file));
@@ -36,11 +37,20 @@ try {
     const guardEntry=new URL(JSON.parse(restrict[1]));
     assert.equal(fileURLToPath(guardEntry),path.join(fixturePlugin,'social-tool-restrict.mjs'));
     assert.equal(guardEntry.search,entry.search);
+    return entry.search;
   };
-  assertPluginEntry(firstPluginPatch);
+  const assertVoicePluginEntry = (patch, expectedSearch) => {
+    const match=/    - id: dsh-voice-plugin\\r?\\n      name: (\"[^\"\\r\\n]+\")/.exec(patch);
+    assert(match,'generated DSH configuration must contain the voice service plugin entry');
+    const entry=new URL(JSON.parse(match[1]));
+    assert.equal(fileURLToPath(entry),path.join(fixture,'packages','dsh-voice-plugin','index.mjs'),'DSH must load the voice plugin from this installation, not the build machine');
+    assert.match(entry.search,/^\\?wechatagent=[a-f0-9]{16}$/);
+    assert.equal(entry.search,expectedSearch,'voice service and bridge must share one source revision');
+  };
+  const firstRevision=assertPluginEntry(firstPluginPatch);assertVoicePluginEntry(firstPluginPatch,firstRevision);
   fs.appendFileSync(path.join(fixturePlugin,'search-policy.mjs'),'\n// fixture policy revision\n');prepare(fixture);
   const revisedPluginPatch=fs.readFileSync(path.join(fixturePlugin,'cordis.patch.yml'),'utf8');
-  assertPluginEntry(revisedPluginPatch);
+  const revisedRevision=assertPluginEntry(revisedPluginPatch);assertVoicePluginEntry(revisedPluginPatch,revisedRevision);
   assert.notEqual(firstPluginPatch,revisedPluginPatch,'policy changes must invalidate the loaded plugin module version');
   assert(revisedPluginPatch.includes('id: social-tool-restrict'),'safe tool restrictions must remain mounted');
   prepare(fixture);assert.equal(fs.readFileSync(path.join(fixturePlugin,'cordis.patch.yml'),'utf8'),revisedPluginPatch,'unchanged sources must preserve the module version');
@@ -49,8 +59,11 @@ try {
   assertPluginEntry(memePluginPatch);
   assert.notEqual(memePluginPatch,revisedPluginPatch,'meme library changes must invalidate the bridge revision without changing its entry');
   fs.appendFileSync(path.join(fixturePlugin,'deadline.mjs'),'\n// fixture image timeout revision\n');prepare(fixture);
-  const mediaPluginPatch=fs.readFileSync(path.join(fixturePlugin,'cordis.patch.yml'),'utf8');assertPluginEntry(mediaPluginPatch);
+  const mediaPluginPatch=fs.readFileSync(path.join(fixturePlugin,'cordis.patch.yml'),'utf8');const mediaRevision=assertPluginEntry(mediaPluginPatch);assertVoicePluginEntry(mediaPluginPatch,mediaRevision);
   assert.notEqual(mediaPluginPatch,memePluginPatch,'image deadline changes must invalidate the bridge revision');
+  fs.appendFileSync(path.join(fixture,'packages/dsh-voice-plugin/voice-service.mjs'),'\\n// fixture voice service revision\\n');prepare(fixture);
+  const voicePluginPatch=fs.readFileSync(path.join(fixturePlugin,'cordis.patch.yml'),'utf8');const voiceRevision=assertPluginEntry(voicePluginPatch);assertVoicePluginEntry(voicePluginPatch,voiceRevision);
+  assert.notEqual(voicePluginPatch,mediaPluginPatch,'voice service changes must invalidate the shared DSH module revision');
   const bridge = JSON.parse(fs.readFileSync(path.join(fixture, 'state', 'bridge-config.json'), 'utf8'));
   const io = JSON.parse(fs.readFileSync(path.join(fixture, 'state', 'wechat-io-config.json'), 'utf8'));
   assert.equal(bridge.role, '# Test role');
