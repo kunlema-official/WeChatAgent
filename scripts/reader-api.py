@@ -484,36 +484,23 @@ class Reader:
         media_dir = self.account / 'db_storage' / 'media'
         candidates = [media_dir / 'media_0.db', self.account / 'db_storage' / 'media_0.db']
         candidates.extend(sorted(media_dir.glob('media_*.db')) if media_dir.is_dir() else [])
-        media_file = next((file for file in candidates if file.is_file()), None)
-        if media_file is None:
+        media_files = []
+        seen_paths = set()
+        for candidate in candidates:
+            try:
+                if not candidate.is_file():
+                    continue
+                resolved = str(candidate.resolve())
+            except OSError:
+                continue
+            if resolved not in seen_paths:
+                seen_paths.add(resolved)
+                media_files.append(candidate)
+        if not media_files:
             self.voice_error = 'VOICE_MEDIA_DATABASE_MISSING'
             raise RuntimeError(self.voice_error)
-        connection = None
-        try:
-            key, salt = nt.derive_database_key(str(media_file), '', '', self.passphrase)
-            connection, cursor = nt.connect_nt_db(str(media_file), key, salt)
-            cursor.execute('PRAGMA query_only=ON')
-            cursor.execute('PRAGMA busy_timeout=3000')
-            tables = {row[0].casefold() for row in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            if 'name2id' not in tables or 'voiceinfo' not in tables:
-                self.voice_error = 'VOICE_MEDIA_SCHEMA_UNAVAILABLE'
-                raise RuntimeError(self.voice_error)
-            row = cursor.execute('SELECT rowid FROM Name2Id WHERE user_name=? LIMIT 1', (talker,)).fetchone()
-            if not row:
-                self.voice_error = 'VOICE_CHAT_ID_NOT_FOUND'
-                raise RuntimeError(self.voice_error)
-            chat_id = int(row[0])
-            result = None
-            if create_time > 0:
-                result = cursor.execute('SELECT voice_data FROM VoiceInfo WHERE chat_name_id=? AND local_id=? AND create_time=? ORDER BY create_time DESC LIMIT 1',
-                    (chat_id, local_id, create_time)).fetchone()
-            if not result:
-                result = cursor.execute('SELECT voice_data FROM VoiceInfo WHERE chat_name_id=? AND local_id=? ORDER BY create_time DESC LIMIT 1',
-                    (chat_id, local_id)).fetchone()
-            if not result or result[0] is None:
-                self.voice_error = 'VOICE_AUDIO_NOT_FOUND'
-                raise RuntimeError(self.voice_error)
-            value = result[0]
+
+        def audio_bytes(value):
             if isinstance(value, bytes):
                 audio = value
             elif isinstance(value, str):
@@ -521,13 +508,76 @@ class Reader:
             else:
                 audio = bytes(value)
             if not audio or len(audio) > 4 * 1024 * 1024:
-                self.voice_error = 'VOICE_AUDIO_SIZE_INVALID'
+                raise RuntimeError('VOICE_AUDIO_SIZE_INVALID')
+            return audio
+
+        exact_matches = []
+        fallback_matches = []
+        schema_found = False
+        chat_found = False
+        database_error = False
+        last_error = 'VOICE_AUDIO_NOT_FOUND'
+        for media_file in media_files:
+            connection = None
+            try:
+                key, salt = nt.derive_database_key(str(media_file), '', '', self.passphrase)
+                connection, cursor = nt.connect_nt_db(str(media_file), key, salt)
+                cursor.execute('PRAGMA query_only=ON')
+                cursor.execute('PRAGMA busy_timeout=3000')
+                tables = {row[0].casefold() for row in cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if 'name2id' not in tables or 'voiceinfo' not in tables:
+                    last_error = 'VOICE_MEDIA_SCHEMA_UNAVAILABLE'
+                    continue
+                schema_found = True
+                row = cursor.execute('SELECT rowid FROM Name2Id WHERE user_name=? LIMIT 1', (talker,)).fetchone()
+                if not row:
+                    continue
+                chat_found = True
+                chat_id = int(row[0])
+                if create_time > 0:
+                    result = cursor.execute('SELECT voice_data FROM VoiceInfo WHERE chat_name_id=? AND local_id=? AND create_time=? ORDER BY create_time DESC LIMIT 1',
+                        (chat_id, local_id, create_time)).fetchone()
+                    if result and result[0] is not None:
+                        try:
+                            exact_matches.append(audio_bytes(result[0]))
+                        except RuntimeError as error:
+                            last_error = str(error)
+                rows = cursor.execute('SELECT create_time, voice_data FROM VoiceInfo WHERE chat_name_id=? AND local_id=? ORDER BY create_time DESC LIMIT 2',
+                    (chat_id, local_id)).fetchall()
+                for created, value in rows:
+                    if value is None:
+                        continue
+                    try:
+                        fallback_matches.append((int(created or 0), audio_bytes(value)))
+                    except RuntimeError as error:
+                        last_error = str(error)
+            except Exception:
+                # A locked or unreadable shard must not make us guess from a weaker identity.
+                database_error = True
+                last_error = 'VOICE_MEDIA_DATABASE_UNAVAILABLE'
+                continue
+            finally:
+                if connection is not None:
+                    connection.close()
+
+        matches = exact_matches if exact_matches else ([] if database_error else [audio for _, audio in fallback_matches])
+        if matches:
+            unique = {hashlib.sha256(audio).hexdigest(): audio for audio in matches}
+            if len(unique) > 1:
+                self.voice_error = 'VOICE_MESSAGE_IDENTITY_AMBIGUOUS'
                 raise RuntimeError(self.voice_error)
             self.voice_error = ''
-            return audio
-        finally:
-            if connection is not None:
-                connection.close()
+            return next(iter(unique.values()))
+        if database_error:
+            code = 'VOICE_MEDIA_DATABASE_UNAVAILABLE'
+        elif not schema_found:
+            code = 'VOICE_MEDIA_SCHEMA_UNAVAILABLE'
+        elif not chat_found:
+            code = 'VOICE_CHAT_ID_NOT_FOUND'
+        else:
+            code = last_error
+        self.voice_error = code
+        raise RuntimeError(code)
 
     def resolve_voice_bytes(self, voice_id):
         descriptor = self.voice_index.get(voice_id)
