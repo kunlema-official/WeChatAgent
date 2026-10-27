@@ -88,7 +88,7 @@ export class WechatOneBotAdapter extends BaseAdapter {
       ...(source==='proactive'?{wechatagent_source:'proactive',wechatagent_context_id:contextId}:{})
     };
     let result;
-    try{result=await this.server.action(action,params);}
+    try{result=await this.server.action(action,params,{timeoutMs:175000});}
     catch(error){
       const uncertainVoice=error.code==='VOICE_DELIVERY_UNCONFIRMED';
       const uncertainFallback=error.code==='TEXT_DELIVERY_UNCONFIRMED';
