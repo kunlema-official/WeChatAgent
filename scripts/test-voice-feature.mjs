@@ -97,6 +97,7 @@ test('the production social bridge wires the verified per-chat voice policy into
   const bridge = fs.readFileSync(new URL('../components/qq-bridge/src/social-bridge.js', import.meta.url), 'utf8');
   assert.match(bridge, /import \{ voiceEnabledFor as isVoiceEnabledFor \} from '\.\.\/\.\.\/\.\.\/packages\/dsh-voice-plugin\/voice-policy\.mjs';/);
   assert.match(bridge, /voiceEnabledFor: key => \{[^}]*isVoiceEnabledFor\(current,key\)/);
+  assert.match(bridge, /sendVoice: \(message,text,options\)=>adapter\.sendVoice\(\{kind:message\.kind,target:message\.conversation_id,text,deliveryId:options\?\.deliveryId\}\)/, 'the production social bridge must route voice reply parts to the native-capable adapter');
   assert.match(engine, /constructor\(\{ buffer, decide, send, sendVoice,/);
   assert.match(engine, /Object\.assign\(this, \{ buffer, decide, send, sendVoice,/);
   assert.match(engine, /voiceEnabledFor=\(\)=>false/);
@@ -324,6 +325,46 @@ test('TTS output must be a bounded SILK file inside the generated-output directo
   const wrong = path.join(outgoing, `${'f'.repeat(8)}-${'1'.repeat(4)}-${'2'.repeat(4)}-${'3'.repeat(4)}-${'4'.repeat(12)}.silk`);
   fs.writeFileSync(wrong, Buffer.concat([Buffer.from('NOT_SILK!', 'ascii'), Buffer.alloc(64)]));
   assert.throws(() => validateVoiceArtifact(root, { path: wrong, bytes: 73, durationMs: 2500 }), /VOICE_OUTPUT_INVALID/);
+});
+
+test('enabled incoming voice is transcribed into a normal text event and disabled chats are ignored', async () => {
+  const adapter = Object.create(HookOneBot.prototype);
+  adapter.project = { wechat: { whitelist: { private: ['123'], groups: [] }, voice: { enabled: false, chats: { [privateKey]: true } } } };
+  adapter.ownWxid = 'wxid_self';
+  adapter.status = { last_error: '' };
+  adapter.reload = () => {};
+  adapter.allowed = (kind, target) => kind === 'private' && String(target) === '123';
+  adapter.seen = new Map();
+  adapter.voiceProcessing = new Set();
+  let readPath = '', request = null, forwarded = null;
+  adapter.readerBytes = async route => { readPath = route; return Buffer.from('#!SILK_V3voicebytes'); };
+  adapter.dshRequest = async (route, body, timeoutMs) => {
+    request = { route, body, timeoutMs };
+    return { text: '晚上见' };
+  };
+  adapter.enqueuePlain = payload => { forwarded = payload; };
+  const payload = {
+    event: 'message.new', sessionId: 'wxid_friend', talkerId: 'wxid_friend',
+    isSend: false, conversationId: '123', rawid: 'a'.repeat(64),
+    voice: { id: 'b'.repeat(64) }, type: 34,
+  };
+  await adapter.enqueueVoice(payload);
+  assert.equal(readPath, '/api/v1/voices/' + 'b'.repeat(64));
+  assert.equal(request.route, '/voice/transcribe');
+  assert.equal(request.body.conversationKey, privateKey);
+  assert.equal(request.body.messageId, 'a'.repeat(64));
+  assert.equal(Buffer.from(request.body.audioBase64, 'base64').toString(), '#!SILK_V3voicebytes');
+  assert.equal(request.timeoutMs, 600000);
+  assert.equal(forwarded.type, 1);
+  assert.equal(forwarded.content, '晚上见');
+  assert.equal(forwarded.voice, undefined);
+  assert.equal(adapter.voiceProcessing.size, 0);
+
+  adapter.project.wechat.voice.chats[privateKey] = false;
+  forwarded = null;
+  await adapter.enqueueVoice(payload);
+  assert.equal(request.body.messageId, 'a'.repeat(64), 'a disabled chat must not issue another ASR request');
+  assert.equal(forwarded, null, 'disabled voice messages must not enter the chat reply pipeline');
 });
 
 test('voice events are read from the media database through an authenticated, whitelist-checked reader route', () => {
