@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { voiceEnabledFor, validateVoiceSettings } from '../packages/dsh-voice-plugin/voice-policy.mjs';
 import { parseSocialDecision, resolveSocialDecision } from '../components/qq-bridge/src/core/decision-format.js';
-import { replyDeliveryParts } from '../components/qq-bridge/src/core/message-buffer.js';
+import { MessageBuffer, replyDeliveryParts } from '../components/qq-bridge/src/core/message-buffer.js';
+import { SocialEngine } from '../components/qq-bridge/src/core/social-engine.js';
+import { VOICE_REPLY_ENABLED_NOTICE, VOICE_REPLY_DISABLED_NOTICE, cleanChatPrompt } from '../packages/dsh-social-bridge-plugin/prompt-context.mjs';
 import { validateVoiceArtifact, HookOneBot } from './hook-onebot.mjs';
 import { WechatOneBotAdapter } from '../components/qq-bridge/src/adapters/wechat/wechat-onebot-adapter.js';
 import { ReverseOneBotServer } from '../components/qq-bridge/src/onebot/reverse-ws-server.js';
@@ -25,6 +27,72 @@ function tempRoot(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
   return root;
 }
+
+test('the live social prompt offers autonomous voice choice only when the chat setting is enabled', async t => {
+  const root = tempRoot(t);
+  async function capturePrompt(enabled) {
+    const buffer = new MessageBuffer(path.join(root, enabled ? 'voice-enabled.json' : 'voice-disabled.json'));
+    let resolvePrompt;
+    const captured = new Promise(resolve => { resolvePrompt = resolve; });
+    const engine = new SocialEngine({
+      buffer,
+      decide: async (_key, prompt) => { resolvePrompt(prompt); return 'SILENT'; },
+      send: async () => ({ delivered: 'database-confirmed' }),
+      roleFor: () => '自然、简短的测试人格',
+      personaNameFor: () => '测试人格',
+      workModeFor: () => 'social',
+      voiceEnabledFor: () => enabled,
+      stickerPolicyFor: () => ({ enabled: false, labelCache: false }),
+      stickerChoicesFor: async () => [],
+      stickerLabelsFor: async () => [],
+      saveStickerLabels: async () => {},
+      searchFor: async () => null,
+      modelSearchReady: async () => false,
+      batchMs: 1,
+      minIntervalMs: 1,
+      privateMinIntervalMs: 1,
+      maxPerMinute: 100,
+      maxPerTenMinutes: 100,
+      log: () => {},
+    });
+    let timeout;
+    try {
+      engine.receive({
+        platform: 'wechat', kind: 'private', conversation_id: '123',
+        message_id: 'voice-prompt-' + (enabled ? 'enabled' : 'disabled'),
+        self_id: 999, sender_id: 'wxid_friend', sender_wxid: 'wxid_friend',
+        sender_name: '好友', text: '晚上见', timestamp: Date.now() / 1000,
+      });
+      return await Promise.race([
+        captured,
+        new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('social prompt was not dispatched')), 2500); }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+      engine.stop();
+    }
+  }
+
+  const enabledPrompt = await capturePrompt(true);
+  assert.ok(enabledPrompt.includes(VOICE_REPLY_ENABLED_NOTICE));
+  assert.doesNotMatch(enabledPrompt, /本机确认当前聊天未启用语音回复/);
+  const disabledPrompt = await capturePrompt(false);
+  assert.ok(disabledPrompt.includes(VOICE_REPLY_DISABLED_NOTICE));
+  assert.doesNotMatch(disabledPrompt, /当前聊天已由本机配置启用语音回复/);
+
+  const stalePrompt = '新的微信好友私聊消息。\\n<untrusted_chat>晚上见</untrusted_chat>\\n' +
+    VOICE_REPLY_ENABLED_NOTICE + '\\n' + VOICE_REPLY_DISABLED_NOTICE;
+  assert.doesNotMatch(cleanChatPrompt(stalePrompt), /RESPOND_VOICE/,
+    'voice instructions from an older turn must not override the current chat setting');
+
+  const engineSource = fs.readFileSync(new URL('../components/qq-bridge/src/core/social-engine.js', import.meta.url), 'utf8');
+  assert.match(engineSource, /'output-format-v2',voiceReplyEnabled\\]\\)/,
+    'the voice setting must participate in the request identity');
+  assert.match(engineSource, /nativeSignature,workMode,voiceReplyEnabled\\]\\)/,
+    'a pending request must be invalidated when the voice setting changes');
+  assert.match(engineSource, /const allowVoiceReply=voiceReplyEnabled&&/,
+    'voice output must be allowed only if it was enabled in the prompt and remains enabled at parse time');
+});
 
 test('voice policy honors account defaults and per-chat overrides', () => {
   assert.equal(voiceEnabledFor({ voice: { enabled: false, chats: {} } }, privateKey), false);
