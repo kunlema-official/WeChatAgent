@@ -476,13 +476,9 @@ class Reader:
             temp.replace(self.voice_index_file)
         return voice_id
 
-    def resolve_voice_bytes(self, voice_id):
-        descriptor = self.voice_index.get(voice_id)
-        if not descriptor or descriptor.get('account') != self.account.name or not self.image_talker_allowed(descriptor.get('talker', '')):
-            raise PermissionError('Voice is unavailable or not authorized')
-        talker = descriptor['talker']
-        local_id = int(descriptor.get('localId') or 0)
-        create_time = int(descriptor.get('createTime') or 0)
+    def _voice_data_for_message(self, talker, local_id, create_time):
+        if not self.image_talker_allowed(talker):
+            raise PermissionError('Voice conversation is not allowed')
         if local_id <= 0:
             raise RuntimeError('VOICE_MESSAGE_IDENTITY_INVALID')
         media_dir = self.account / 'db_storage' / 'media'
@@ -532,6 +528,31 @@ class Reader:
         finally:
             if connection is not None:
                 connection.close()
+
+    def resolve_voice_bytes(self, voice_id):
+        descriptor = self.voice_index.get(voice_id)
+        if not descriptor or descriptor.get('account') != self.account.name or not self.image_talker_allowed(descriptor.get('talker', '')):
+            raise PermissionError('Voice is unavailable or not authorized')
+        return self._voice_data_for_message(
+            descriptor['talker'],
+            int(descriptor.get('localId') or 0),
+            int(descriptor.get('createTime') or 0))
+
+    def voice_receipt_digest(self, talker, local_id, create_time):
+        if not self.image_talker_allowed(talker):
+            raise PermissionError('Voice conversation is not allowed')
+        if local_id <= 0 or create_time <= 0:
+            raise RuntimeError('VOICE_RECEIPT_IDENTITY_INVALID')
+        audio = self._voice_data_for_message(talker, local_id, create_time)
+        # The native sender prepends WeChat's 0x02 marker to the exact SILK file
+        # when constructing the outgoing message. Compare the canonical file
+        # bytes, not merely "some new type-34 message in this conversation".
+        if audio[:1] == b'\x02' and audio[1:10] == b'#!SILK_V3':
+            audio = audio[1:]
+        if not audio.startswith(b'#!SILK_V3'):
+            self.voice_error = 'VOICE_RECEIPT_AUDIO_INVALID'
+            raise RuntimeError(self.voice_error)
+        return hashlib.sha256(audio).hexdigest()
 
     def resolve_image(self, image_id):
         prepared=getattr(self,'meme_send_resources',None)
@@ -1021,6 +1042,14 @@ def serve(reader, port, token):
                     self.respond(reader.files.resolve(url.path.rsplit('/', 1)[1], query.get('conversationKey', [''])[0], query.get('senderWxid', [''])[0]))
                 elif re.fullmatch(r'/api/v1/images/[a-f0-9]{64}', url.path):
                     self.respond(reader.resolve_image(url.path.rsplit('/', 1)[1]))
+                elif url.path == '/api/v1/voice-receipt':
+                    try:
+                        talker = query.get('talker', [''])[0]
+                        local_id = int(query.get('localId', ['0'])[0])
+                        create_time = int(query.get('createTime', ['0'])[0])
+                    except (TypeError, ValueError):
+                        raise RuntimeError('VOICE_RECEIPT_REQUEST_INVALID')
+                    self.respond({'success': True, 'sha256': reader.voice_receipt_digest(talker, local_id, create_time)})
                 elif re.fullmatch(r'/api/v1/voices/[a-f0-9]{64}', url.path):
                     audio = reader.resolve_voice_bytes(url.path.rsplit('/', 1)[1])
                     self.send_response(200)
@@ -1053,7 +1082,8 @@ def serve(reader, port, token):
             except Exception as error:
                 image_failure = re.fullmatch(r'/api/v1/images/[a-f0-9]{64}', url.path) and isinstance(error, RuntimeError) and re.fullmatch(r'IMAGE_[A-Z_]{3,80}', str(error))
                 voice_failure = re.fullmatch(r'/api/v1/voices/[a-f0-9]{64}', url.path) and isinstance(error, RuntimeError) and re.fullmatch(r'VOICE_[A-Z_]{3,80}', str(error))
-                self.respond({'success': False, 'error': str(error) if image_failure or voice_failure else 'Reader query failed: ' + type(error).__name__}, 503)
+                voice_receipt_failure = url.path == '/api/v1/voice-receipt' and isinstance(error, RuntimeError) and re.fullmatch(r'VOICE_[A-Z_]{3,80}', str(error))
+                self.respond({'success': False, 'error': str(error) if image_failure or voice_failure or voice_receipt_failure else 'Reader query failed: ' + type(error).__name__}, 503)
 
         def do_POST(self):
             supplied = self.headers.get('Authorization', '').removeprefix('Bearer ')

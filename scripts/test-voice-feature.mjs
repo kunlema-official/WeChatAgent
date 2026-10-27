@@ -1,4 +1,5 @@
 import test from 'node:test';
+import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -242,11 +243,22 @@ test('a compatible native Hook sends generated SILK once and confirms a type-34 
   adapter.allowed = () => true;
   adapter.checkNative = async () => { adapter.status.native_voice_send = true; return { account: 'account', selfId: 1 }; };
   adapter.resolveTarget = async () => 'wxid_fixture';
-  let messageCalls = 0, synthCalls = 0, nativeCalls = 0;
+  let messageCalls = 0, synthCalls = 0, nativeCalls = 0, receiptChecks = 0;
+  const createdAt = Math.floor(Date.now()/1000);
+  const expectedVoiceDigest = crypto.createHash('sha256').update(audio).digest('hex');
   adapter.messages = async () => {
     messageCalls++;
     if (messageCalls === 1) return [];
-    return [{ isSend: true, localType: 34, localId: '200', serverId: '123456', createTime: Math.floor(Date.now()/1000) }];
+    const unrelated = { isSend: true, localType: 34, localId: '199', serverId: '654321', createTime: createdAt };
+    const expected = { isSend: true, localType: 34, localId: '200', serverId: '123456', createTime: createdAt };
+    return messageCalls === 2 ? [unrelated] : [unrelated, expected];
+  };
+  adapter.reader = async route => {
+    const url = new URL(route, 'http://localhost');
+    assert.equal(url.pathname, '/api/v1/voice-receipt');
+    assert.equal(url.searchParams.get('talker'), 'wxid_fixture');
+    receiptChecks++;
+    return { success: true, sha256: url.searchParams.get('localId') === '199' ? 'f'.repeat(64) : expectedVoiceDigest };
   };
   adapter.dshRequest = async (route, body) => {
     assert.equal(route, '/voice/synthesize'); assert.equal(body.conversationKey, 'wechat:private:123');
@@ -262,6 +274,8 @@ test('a compatible native Hook sends generated SILK once and confirms a type-34 
   assert.equal(fs.existsSync(path.join(clientDirectory, 'hook-voice-send.on')), false, 'one-shot native voice gate is removed after request');
   assert.equal(first.media_type, 'wechat-voice');
   assert.equal(first.receipt, 'wechat-server-id');
+  assert.equal(first.message_id, 200, 'an unrelated outgoing voice must not satisfy this send receipt');
+  assert.equal(receiptChecks, 2, 'each candidate is checked once, and the exact audio digest is matched');
   assert.equal(synthCalls, 1); assert.equal(nativeCalls, 1);
   const second = await adapter.sendVoice('private', '123', '你好呀', 'c'.repeat(64), null);
   assert.equal(second.reused, true);
@@ -292,6 +306,8 @@ test('voice events are read from the media database through an authenticated, wh
   assert.match(reader, /if payload\['type'\] == 34:/);
   assert.match(reader, /SELECT voice_data FROM VoiceInfo WHERE chat_name_id=\? AND local_id=\?/);
   assert.match(reader, /X-WeChatAgent-Voice-Format/);
+  assert.match(reader, /def voice_receipt_digest/);
+  assert.match(reader, /api\/v1\/voice-receipt/);
   assert.match(hook, /payload\?\.type===34\?this\.enqueueVoice\(payload\):this\.enqueuePlain\(payload\)/);
   assert.match(bridge, /\/voice\/transcribe/);
   assert.match(bridge, /\/voice\/synthesize/);

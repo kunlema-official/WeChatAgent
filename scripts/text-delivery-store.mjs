@@ -15,6 +15,11 @@ export class TextDeliveryStore {
     if(item.version!==1||item.key!==key||!['dispatching','accepted','unconfirmed','rejected','confirmed'].includes(item.state)||
       typeof item.account!=='string'||typeof item.wxid!=='string'||typeof item.text!=='string'||!item.text.trim()||Buffer.byteLength(item.text)>16000||
       !Number.isFinite(item.startedAt)||!Array.isArray(item.baseline)||item.baseline.length>100||item.baseline.some(id=>!/^\d+$/.test(id))||
+      item.candidateId!==undefined&&typeof item.candidateId==='string'&&!/^\d+$/.test(item.candidateId)||
+      item.voiceDigest!==undefined&&!/^[a-f0-9]{64}$/.test(item.voiceDigest)||
+      item.checkedVoiceIds!==undefined&&(!Array.isArray(item.checkedVoiceIds)||item.checkedVoiceIds.length>100||item.checkedVoiceIds.some(id=>typeof id!=='string'||!/^\d+$/.test(id)))||
+      item.receiptDigestVerified!==undefined&&typeof item.receiptDigestVerified!=='boolean'||
+      item.receiptDigestVerified===true&&(!/^[a-f0-9]{64}$/.test(item.voiceDigest??'')||typeof item.candidateId!=='string'||!/^\d+$/.test(item.candidateId))||
       !validRejection(item.rejection)||!validRejection(item.firstRejection))throw Error('TEXT_DELIVERY_STATE_INVALID');
     return item;
   }

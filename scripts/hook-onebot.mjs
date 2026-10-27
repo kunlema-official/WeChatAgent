@@ -137,7 +137,7 @@ export class HookOneBot {
     if (result?.success === false) fail('READER_NOT_READY');
     return result;
   }
-  reader(route) { return this.json(this.api.reader_base_url, route, { headers: { Authorization: 'Bearer ' + this.api.reader_token } }); }
+  reader(route, timeout = 4000) { return this.json(this.api.reader_base_url, route, { headers: { Authorization: 'Bearer ' + this.api.reader_token } }, timeout); }
   async readerBytes(route, maxBytes = 4 * 1024 * 1024) {
     const response = await this.fetch(this.api.reader_base_url.replace(/\/$/, '') + route, {
       headers: { Authorization: 'Bearer ' + this.api.reader_token }, redirect: 'error', signal: AbortSignal.timeout(15000),
@@ -244,7 +244,7 @@ export class HookOneBot {
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
         const baseline=currentRows.map(row=>String(row.localId)).filter(id=>/^\d+$/.test(id));
-        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,
+        attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,checkedVoiceIds:[],
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
         this.textDeliveries.put(attempt); // Persist before submission; replay must never submit it twice.
         const reject=(code,nativeRet)=>{
@@ -376,6 +376,7 @@ export class HookOneBot {
           throw new AdapterError(/^VOICE_[A-Z0-9_]{3,80}$/.test(code)?code:'VOICE_TTS_FAILED',{attempted:false});
         });
         const artifact=validateVoiceArtifact(this.directory,synthesis);
+        const voiceDigest=crypto.createHash('sha256').update(fs.readFileSync(artifact.path)).digest('hex');
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
         const baseline=currentRows.map(row=>String(row.localId)).filter(id=>/^\d+$/.test(id)).slice(-100);
@@ -409,15 +410,42 @@ export class HookOneBot {
         }
         attempt.state='accepted';this.textDeliveries.put(attempt);
       }
+      if(!/^[a-f0-9]{64}$/.test(attempt.voiceDigest??'')){
+        attempt.state='unconfirmed';this.textDeliveries.put(attempt);
+        throw new AdapterError('VOICE_DELIVERY_UNCONFIRMED',{attempted:true,delivery_id:deliveryId??operation});
+      }
       const deadline=Date.now()+(this.receiptOverride??this.hook.receiptTimeoutMs??18000);
       do {
         const rows=await this.messages(wxid);
         const candidates=rows.filter(row=>row.isSend&&Number(row.localType)===34&&Number.isSafeInteger(Number(row.localId))&&Number(row.localId)>0&&
           !attempt.baseline.includes(String(row.localId))&&Number(row.createTime)>=Math.floor(attempt.startedAt/1000)-30)
           .sort((a,b)=>Number(a.createTime)-Number(b.createTime)||Number(a.localId)-Number(b.localId));
-        if(!attempt.candidateId&&candidates.length){attempt.candidateId=String(candidates[0].localId);this.textDeliveries.put(attempt);}
-        const row=candidates.find(item=>String(item.localId)===attempt.candidateId);
-        if(row&&/^\d{1,32}$/.test(String(row.serverId))&&BigInt(row.serverId)>0n){
+        let checkedThisPass=0;
+        for(const row of candidates){
+          const candidateId=String(row.localId),serverId=String(row.serverId??'');
+          if(attempt.baseline.includes(candidateId)||!/^\\d{1,32}$/.test(serverId)||BigInt(serverId)<=0n)continue;
+          if(attempt.candidateId===candidateId&&attempt.receiptDigestVerified===true){
+            attempt.state='confirmed';attempt.confirmedAt=Date.now();
+            attempt.response={message_id:Number(row.localId),receipt:'wechat-server-id',delivered:'database-confirmed',media_type:'wechat-voice'};
+            this.textDeliveries.put(attempt);this.status.confirmed_sends++;this.status.last_error='';
+            return attempt.response;
+          }
+          if((attempt.checkedVoiceIds??[]).includes(candidateId))continue;
+          if(checkedThisPass>=5)break;
+          checkedThisPass++;
+          let receipt;
+          try{
+            receipt=await this.reader('/api/v1/voice-receipt?talker='+encodeURIComponent(wxid)+'&localId='+encodeURIComponent(candidateId)+'&createTime='+encodeURIComponent(String(row.createTime??'')),3000);
+          }catch{continue;}
+          const digest=String(receipt?.sha256??'');
+          if(!/^[a-f0-9]{64}$/.test(digest))continue;
+          if(digest!==attempt.voiceDigest){
+            attempt.checkedVoiceIds=[...new Set([...(attempt.checkedVoiceIds??[]),candidateId])].slice(-100);
+            this.textDeliveries.put(attempt);
+            continue;
+          }
+          attempt.candidateId=candidateId;attempt.receiptDigestVerified=true;
+          this.textDeliveries.put(attempt);
           attempt.state='confirmed';attempt.confirmedAt=Date.now();
           attempt.response={message_id:Number(row.localId),receipt:'wechat-server-id',delivered:'database-confirmed',media_type:'wechat-voice'};
           this.textDeliveries.put(attempt);this.status.confirmed_sends++;this.status.last_error='';
