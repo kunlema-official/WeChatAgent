@@ -176,6 +176,12 @@ export function createVoiceService(ctx, root, pluginConfig = {}) {
       try { if ((await fsp.stat(file)).mtimeMs < cutoff) await fsp.unlink(file); } catch { /* a concurrent send may still own the file */ }
     }));
   }
+  // Clean crash leftovers on startup and periodically; successful sends also delete their own artifact.
+  void ensureDirs().then(() => Promise.all([incoming, outgoing, temp].map(directory => cleanupStale(directory)))).catch(() => {});
+  const cleanupTimer = setInterval(() => {
+    if (!disposed) void ensureDirs().then(() => Promise.all([incoming, outgoing, temp].map(directory => cleanupStale(directory)))).catch(() => {});
+  }, 15 * 60 * 1000);
+  cleanupTimer.unref?.();
   async function runPython(script, args, timeout) {
     const python = pythonPath();
     try {
@@ -344,6 +350,6 @@ export function createVoiceService(ctx, root, pluginConfig = {}) {
     lastStatusAt = Date.now();
     return lastStatus;
   }
-  async function dispose() { disposed = true; cache.clear(); }
+  async function dispose() { disposed = true; clearInterval(cleanupTimer); cache.clear(); }
   return { status, transcribeSilk, synthesizeSilk, dispose };
 }
