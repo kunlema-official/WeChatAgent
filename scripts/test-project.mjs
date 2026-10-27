@@ -40,11 +40,11 @@ try {
     return entry.search;
   };
   const assertVoicePluginEntry = (patch, expectedSearch) => {
-    const match=/    - id: dsh-voice-plugin\\r?\\n      name: (\"[^\"\\r\\n]+\")/.exec(patch);
+    const match=/    - id: dsh-voice-plugin\r?\n      name: ("[^"\r\n]+")/.exec(patch);
     assert(match,'generated DSH configuration must contain the voice service plugin entry');
     const entry=new URL(JSON.parse(match[1]));
     assert.equal(fileURLToPath(entry),path.join(fixture,'packages','dsh-voice-plugin','index.mjs'),'DSH must load the voice plugin from this installation, not the build machine');
-    assert.match(entry.search,/^\\?wechatagent=[a-f0-9]{16}$/);
+    assert.match(entry.search,/^\?wechatagent=[a-f0-9]{16}$/);
     assert.equal(entry.search,expectedSearch,'voice service and bridge must share one source revision');
   };
   const firstRevision=assertPluginEntry(firstPluginPatch);assertVoicePluginEntry(firstPluginPatch,firstRevision);
@@ -61,7 +61,7 @@ try {
   fs.appendFileSync(path.join(fixturePlugin,'deadline.mjs'),'\n// fixture image timeout revision\n');prepare(fixture);
   const mediaPluginPatch=fs.readFileSync(path.join(fixturePlugin,'cordis.patch.yml'),'utf8');const mediaRevision=assertPluginEntry(mediaPluginPatch);assertVoicePluginEntry(mediaPluginPatch,mediaRevision);
   assert.notEqual(mediaPluginPatch,memePluginPatch,'image deadline changes must invalidate the bridge revision');
-  fs.appendFileSync(path.join(fixture,'packages/dsh-voice-plugin/voice-service.mjs'),'\\n// fixture voice service revision\\n');prepare(fixture);
+  fs.appendFileSync(path.join(fixture,'packages/dsh-voice-plugin/voice-service.mjs'),'\n// fixture voice service revision\n');prepare(fixture);
   const voicePluginPatch=fs.readFileSync(path.join(fixturePlugin,'cordis.patch.yml'),'utf8');const voiceRevision=assertPluginEntry(voicePluginPatch);assertVoicePluginEntry(voicePluginPatch,voiceRevision);
   assert.notEqual(voicePluginPatch,mediaPluginPatch,'voice service changes must invalidate the shared DSH module revision');
   const bridge = JSON.parse(fs.readFileSync(path.join(fixture, 'state', 'bridge-config.json'), 'utf8'));
