@@ -31,6 +31,7 @@ on:
       - 'scripts/voice-requirements.txt'
       - 'scripts/test-installer-runtime.mjs'
       - 'scripts/test-voice-feature.mjs'
+      - 'scripts/test-voice-codec.py'
       - 'scripts/test-reply-protocol.mjs'
       - 'packages/dsh-voice-plugin/**'
       - 'packages/dsh-social-bridge-plugin/**'
@@ -100,6 +101,14 @@ jobs:
         shell: pwsh
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-voice-runtime.ps1
 
+      - name: Smoke-test portable SILK encode and decode
+        shell: pwsh
+        run: |
+          $python = 'state/installer-stage/runtime/voice-python/python.exe'
+          if (-not (Test-Path -LiteralPath $python)) { throw 'Portable voice Python is missing.' }
+          & $python scripts/test-voice-codec.py
+          if ($LASTEXITCODE -ne 0) { throw 'Portable voice codec round-trip failed.' }
+
       - name: Build update-only installer
         shell: pwsh
         run: npm run installer:build
@@ -127,7 +136,7 @@ jobs:
             hookSourceCommit = $hook.commit
             sourceCommit = $env:GITHUB_SHA
             builtAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-            checks = @('focused-tests-passed','privacy-scan-passed','hook-build-manifest-verified','portable-voice-runtime-import-probe-passed')
+            checks = @('focused-tests-passed','privacy-scan-passed','hook-build-manifest-verified','portable-voice-runtime-import-probe-passed','portable-voice-codec-roundtrip-passed')
             limitations = @('No live WeChat process or real voice-bubble send was tested by this cloud build.','This update-only installer expects an existing WeChatAgent data workspace with a matching WeChat 4.1.10.27 client.')
           }
           $verification | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath 'release/installer/VERIFICATION.json' -Encoding UTF8
