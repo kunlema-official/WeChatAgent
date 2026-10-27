@@ -29,7 +29,7 @@ const {nativeMemorySummaries}=await import(new URL('./memory-summary.mjs'+runtim
 const {AssistantThinkingFeedback,createProgressWriter}=await import(new URL('./assistant-feedback.mjs'+runtimeQuery,import.meta.url));
 const {bindModelSearch,createModelSearchTurn,modelSearchInstructions,builtinModelSearch,refreshSearchToolBaseline}=await import(new URL('./model-search.mjs'+runtimeQuery,import.meta.url));
 const {createMemeLibrary,bindMemeLibrary}=await import(new URL('./meme-library.mjs'+runtimeQuery,import.meta.url));
-const {PROMPT_POLICY,SOCIAL_FINAL_OUTPUT_HINT,stableChatInstructions,migrateChatContext,syncInstructionSlot,retireTurnContext,dedupePreviousReply}=await import(new URL('./prompt-context.mjs'+runtimeQuery,import.meta.url));
+const {PROMPT_POLICY,SOCIAL_FINAL_OUTPUT_HINT,finalOutputHintForVoice,stableChatInstructions,migrateChatContext,syncInstructionSlot,retireTurnContext,dedupePreviousReply}=await import(new URL('./prompt-context.mjs'+runtimeQuery,import.meta.url));
 const {createMemberMemory,bindMemberMemory}=await import(new URL('./member-memory.mjs'+runtimeQuery,import.meta.url));
 const {admittedSearch,consumeSearchRequest,retireSearchContext}=await import(new URL('./search-budget.mjs'+runtimeQuery,import.meta.url));
 const {SOCIAL_TOOL_ISOLATION,retireSocialToolMetadata}=await import(new URL('./social-tool-policy.mjs'+runtimeQuery,import.meta.url));
@@ -59,9 +59,7 @@ const clean = (text, limit=60) => String(text ?? '').replace(/[\u0000-\u001f\u00
 function finalOutputHint(root,key){
   let enabled=false;
   try{const config=JSON.parse(fs.readFileSync(path.join(root,'config','wechatagent.json'),'utf8'));enabled=voiceEnabledFor(config.wechat,key);}catch{}
-  return SOCIAL_FINAL_OUTPUT_HINT+'\n'+(enabled
-    ? '本机确认当前聊天已启用语音能力：当回复简短、口语化且适合语音时，可以输出 RESPOND_VOICE: 正文；其他情况输出 RESPOND: 正文。语音正文建议不超过 120 个汉字，不要同时输出两种协议。'
-    : '本机确认当前聊天未启用语音能力：只输出 RESPOND: 正文，不得使用 RESPOND_VOICE。');
+  return finalOutputHintForVoice(enabled);
 }
 
 export function sessionTitle(key, conversationName, personaName) {
