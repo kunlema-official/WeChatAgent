@@ -17,12 +17,12 @@ function fixture(t){
  return {adapter,directory,calls};
 }
 async function boundSocket(t){
- const code='$s=[Net.Sockets.Socket]::new([Net.Sockets.AddressFamily]::InterNetwork,[Net.Sockets.SocketType]::Stream,[Net.Sockets.ProtocolType]::Tcp);$s.ExclusiveAddressUse=$true;$s.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Loopback,0));[Console]::WriteLine($s.LocalEndPoint.Port);$null=[Console]::ReadLine();$s.Dispose()';
- const child=spawn(windowsPowerShellExecutable(),['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')],{env:windowsPowerShellEnvironment(),windowsHide:true,stdio:['pipe','pipe','pipe']});
+ const code='$ErrorActionPreference="Stop";$s=[System.Net.Sockets.Socket]::new([System.Net.Sockets.AddressFamily]::InterNetwork,[System.Net.Sockets.SocketType]::Stream,[System.Net.Sockets.ProtocolType]::Tcp);$s.ExclusiveAddressUse=$true;$s.Bind([System.Net.IPEndPoint]::new([System.Net.IPAddress]::Loopback,0));[Console]::Out.WriteLine($s.LocalEndPoint.Port);[Console]::Out.Flush();Start-Sleep -Seconds 60;$s.Dispose()';
+ const child=spawn(windowsPowerShellExecutable(),['-NoProfile','-NonInteractive','-Command',code],{env:windowsPowerShellEnvironment(),windowsHide:true,stdio:['ignore','pipe','pipe']});
  const closed=new Promise(resolve=>child.once('close',resolve));let stderr='';child.stderr.on('data',data=>stderr+=data);
  const lines=createInterface({input:child.stdout});
- t.after(async()=>{child.stdin.end();await closed;});
- const port=Number(await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('bound fixture: '+stderr)),10000);lines.once('line',line=>{clearTimeout(timer);resolve(line);});child.once('error',reject);}));lines.close();
+ t.after(async()=>{if(child.exitCode===null)child.kill();await closed;lines.close();});
+ const port=Number(await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('bound fixture timed out; stderr='+stderr)),10000);lines.once('line',line=>{clearTimeout(timer);resolve(line);});child.once('error',reject);child.once('exit',code=>{if(code!==null)reject(Error('bound fixture exited '+code+'; stderr='+stderr));});}));lines.close();
  assert(port>0);return {port,pid:child.pid};
 }
 
