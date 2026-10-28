@@ -371,6 +371,12 @@ export class HookOneBot {
     try {
       this.reload();
       if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
+      // Recheck before paid TTS work: the chat setting can change after the
+      // initial health check and must still be authoritative.
+      if(!voiceEnabledFor(this.project.wechat,conversationKey)){
+        const fallback=await this.send(kind,target,text,deliveryId,proactive);
+        return {...fallback,media_type:'text-fallback',voiceFallback:'voice_disabled'};
+      }
       const wxid=await this.resolveTarget(kind,target);
       const operation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\0'+text);
       let attempt=this.textDeliveries.get(operation);
@@ -390,6 +396,14 @@ export class HookOneBot {
         });
         const artifact=validateVoiceArtifact(this.directory,synthesis);
         generatedArtifactPath=artifact.path;
+        // TTS can take minutes. Re-read policy before opening the native gate
+        // so disabling voice during synthesis cannot cause a late voice send.
+        this.reload();
+        if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
+        if(!voiceEnabledFor(this.project.wechat,conversationKey)){
+          const fallback=await this.send(kind,target,text,deliveryId,proactive);
+          return {...fallback,media_type:'text-fallback',voiceFallback:'voice_disabled_during_synthesis'};
+        }
         const voiceDigest=crypto.createHash('sha256').update(fs.readFileSync(artifact.path)).digest('hex');
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
