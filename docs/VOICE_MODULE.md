@@ -1,5 +1,14 @@
 # WeChatAgent voice module — preview integration
 
+## Architecture boundary: DSH service plugin vs. ZIP plugin API
+
+This is a first-party **DSH Cordis service plugin**, not a user-installed WeChatAgent ZIP/API-v2 plugin. The 0.4.1 ZIP API is designed for explicitly authorized user extensions; it does not expose raw WeChat audio, DSH's `speechToText` provider, or the native voice-send gate. Routing ASR/TTS through that API would add another plugin process and extra serialization without supplying the required media lifecycle.
+
+The intended flow is: WeChatAgent per-chat policy → native Hook/reader → authenticated loopback voice RPC → this plugin's ASR/TTS service → the existing reply protocol and thin OneBot adapter. The DSH patch loads `speech-to-text` and the SenseVoice provider before `dsh-voice-plugin`, then starts the social bridge. The voice plugin registers the `wechatVoice` service; the bridge owns the authenticated RPC routes because it already owns the local token, project root, and chat allowlist.
+
+This keeps ASR/TTS separate from WeChatAgent's send adapter while retaining one source of truth for per-chat voice authorization. The RPC routes currently live in `native-context.mjs`; extracting them into a dedicated route module would be a maintainability refactor, not a requirement to use the public ZIP plugin API.
+
+
 ## Current architecture
 
 1. The NT reader accepts WeChat message type `34` and emits a signed, per-message voice descriptor.
