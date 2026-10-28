@@ -296,13 +296,11 @@ async function fixture(t) {
   const statePath=path.join(dir,'sessions.json'), store=new Map(), servers=[],archived=new Set();
   t.after(async()=>{for(const server of servers.reverse())await server.stop();fs.rmSync(dir,{recursive:true,force:true});});
   async function start(options = {}) {
-    let port;
-    for (;;) {
-      const portServer=http.createServer();
-      try { await new Promise((resolve,reject)=>{portServer.once('error',reject);portServer.listen(20000+crypto.randomInt(40000),'127.0.0.1',resolve);}); }
-      catch(error) { if(error.code==='EADDRINUSE')continue; throw error; }
-      port=portServer.address().port;await new Promise(r=>portServer.close(r));break;
-    }
+    const portServer=http.createServer();
+    // Ask Windows for an available ephemeral port instead of sampling the
+    // dynamic range: Windows reserves some ports even when no process listens.
+    const port=await listenEphemeral(portServer);
+    await new Promise((resolve,reject)=>portServer.close(error=>error?reject(error):resolve()));
     const listeners=new Map(), agents=new Map(), calls={create:[],resume:[],model:[],inputs:[],requests:[],titles:[],costLogs:[]};let disposer,turn=0;
     const emit=(name,...args)=>{for(const listener of listeners.get(name) ?? [])listener(...args);};
     const waterfall=async(name,payload,next)=>{const callbacks=listeners.get(name) ?? [];let at=0;const invoke=()=>at<callbacks.length?callbacks[at++](payload,invoke):next();return invoke();};
