@@ -428,6 +428,11 @@ test('enabled incoming voice is transcribed into a normal text event and disable
   assert.equal(Buffer.from(request.body.audioBase64, 'base64').toString(), '#!SILK_V3voicebytes');
   assert.equal(request.timeoutMs, 600000);
 
+  assert.equal(forwarded.type, 1);
+  assert.equal(forwarded.content, '晚上见');
+  assert.equal(forwarded.voice, undefined);
+  assert.equal(adapter.voiceProcessing.size, 0);
+
   // If voice is disabled while ASR is running, do not inject the transcript.
   adapter.project.wechat.voice.chats[privateKey] = true;
   const originalDshRequest = adapter.dshRequest;
@@ -438,17 +443,14 @@ test('enabled incoming voice is transcribed into a normal text event and disable
   };
   forwarded = null;
   await adapter.enqueueVoice({ ...payload, rawid: 'c'.repeat(64) });
+  assert.equal(request.body.messageId, 'c'.repeat(64));
   assert.equal(forwarded, null);
-  assert.equal(adapter.voiceProcessing.size, 0);
-  assert.equal(forwarded.type, 1);
-  assert.equal(forwarded.content, '晚上见');
-  assert.equal(forwarded.voice, undefined);
   assert.equal(adapter.voiceProcessing.size, 0);
 
   adapter.project.wechat.voice.chats[privateKey] = false;
   forwarded = null;
   await adapter.enqueueVoice(payload);
-  assert.equal(request.body.messageId, 'a'.repeat(64), 'a disabled chat must not issue another ASR request');
+  assert.equal(request.body.messageId, 'c'.repeat(64), 'a disabled chat must not issue another ASR request');
   assert.equal(forwarded, null, 'disabled voice messages must not enter the chat reply pipeline');
 });
 
