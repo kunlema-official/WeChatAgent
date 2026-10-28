@@ -477,6 +477,21 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
   assert.doesNotMatch(patch, /file:\/\/\/mnt\/data\/work\/preview\//, 'the checked-in DSH patch must be portable outside the build container');
   assert.match(patch, /name: ["']?dsh-voice-plugin\/index\.mjs/);
   assert.match(patch, /name: ["']?dsh-social-bridge-plugin\/native-context\.mjs/);
+  const pluginIds = [...patch.matchAll(/^\s*- id: ([a-z0-9-]+)\s*$/gm)].map(match => match[1]);
+  const speechIndex = pluginIds.indexOf('speech-to-text');
+  const providerIndex = pluginIds.indexOf('speech-to-text-sensevoice');
+  const voiceIndex = pluginIds.indexOf('dsh-voice-plugin');
+  const bridgeIndex = pluginIds.indexOf('dsh-social-bridge-plugin');
+  assert(speechIndex >= 0 && providerIndex > speechIndex && voiceIndex > providerIndex && bridgeIndex > voiceIndex,
+    'DSH must load the speech service and SenseVoice provider before the voice service, then the bridge');
+  assert.equal(pluginIds.filter(id => id === 'dsh-voice-plugin').length, 1,
+    'the primary WeChatAgent patch must register the voice service exactly once');
+  const voiceEntry = fs.readFileSync(new URL('../packages/dsh-voice-plugin/index.mjs', import.meta.url), 'utf8');
+  assert.match(voiceEntry, /export const inject = \['speechToText'\]/);
+  assert.match(voiceEntry, /registerVoiceService\(ctx, service\)/);
+  const pluginGuide = fs.readFileSync(new URL('../docs/PLUGIN_DEVELOPMENT.md', import.meta.url), 'utf8');
+  assert.match(pluginGuide, /DSH 插件不兼容此 ZIP 接口/,
+    'the DSH service plugin must remain distinct from the public WeChatAgent ZIP plugin API');
   const workflow = fs.readFileSync(new URL('../.github/workflows/windows-voice-installer.yml', import.meta.url), 'utf8');
   assert.match(workflow, /Smoke-test portable SILK encode and decode/);
   assert.match(workflow, /scripts\/test-voice-codec\.py/);
