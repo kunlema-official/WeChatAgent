@@ -276,6 +276,45 @@ test('the current native Hook capability gate falls back to text without invokin
   assert.equal(result.text, '你好呀');
 });
 
+test('disabling voice during TTS prevents a late native send and falls back to text', async t => {
+  const root = tempRoot(t);
+  const outgoing = path.join(root, 'state', 'voice', 'outgoing');
+  fs.mkdirSync(outgoing, { recursive: true });
+  const file = path.join(outgoing, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.silk');
+  const audio = Buffer.concat([Buffer.from('#!SILK_V3', 'ascii'), Buffer.alloc(64, 9)]);
+  fs.writeFileSync(file, audio);
+  const adapter = Object.create(HookOneBot.prototype);
+  adapter.directory = root;
+  adapter.project = { wechat: { whitelist: { private: ['123'], groups: [] }, voice: { enabled: true, chats: {} } } };
+  adapter.hook = { maxConcurrentSends: 4, receiptTimeoutMs: 1000, wechatExecutable: path.join(root, 'Weixin.exe') };
+  adapter.status = { native_voice_send: true, confirmed_sends: 0, last_error: '' };
+  adapter.targetsSending = new Set();
+  adapter.voiceSending = false;
+  adapter.stopped = false;
+  adapter.reload = () => {};
+  adapter.allowed = () => true;
+  adapter.checkNative = async () => ({ account: 'account', selfId: 1 });
+  adapter.resolveTarget = async () => 'wxid_fixture';
+  adapter.textDeliveries = new TextDeliveryStore(path.join(root, 'state', 'text-deliveries'));
+  let textCalls = 0, nativeCalls = 0;
+  adapter.send = async (_kind, _target, text) => { textCalls++; return { delivered: 'database-confirmed', text }; };
+  adapter.dshRequest = async () => {
+    adapter.project.wechat.voice.chats['wechat:private:123'] = false;
+    return { path: file, bytes: audio.length, durationMs: 2500 };
+  };
+  adapter.messages = async () => { throw new Error('native voice must not be attempted after voice is disabled'); };
+  adapter.native = async () => { nativeCalls++; throw new Error('native voice must not be attempted after voice is disabled'); };
+  const result = await adapter.sendVoice('private', '123', '你好呀', 'd'.repeat(64), null);
+  assert.equal(result.media_type, 'text-fallback');
+  assert.equal(result.voiceFallback, 'voice_disabled_during_synthesis');
+  assert.equal(result.delivered, 'database-confirmed');
+  assert.equal(textCalls, 1);
+  assert.equal(nativeCalls, 0);
+  assert.equal(fs.existsSync(file), false, 'generated SILK is cleaned up after the policy changes');
+  assert.equal(adapter.voiceSending, false);
+  assert.equal(adapter.targetsSending.size, 0);
+});
+
 test('a compatible native Hook sends generated SILK once and confirms a type-34 receipt', async t => {
   const root = tempRoot(t);
   const outgoing = path.join(root, 'state', 'voice', 'outgoing');
@@ -388,6 +427,19 @@ test('enabled incoming voice is transcribed into a normal text event and disable
   assert.equal(request.body.messageId, 'a'.repeat(64));
   assert.equal(Buffer.from(request.body.audioBase64, 'base64').toString(), '#!SILK_V3voicebytes');
   assert.equal(request.timeoutMs, 600000);
+
+  // If voice is disabled while ASR is running, do not inject the transcript.
+  adapter.project.wechat.voice.chats[privateKey] = true;
+  const originalDshRequest = adapter.dshRequest;
+  adapter.dshRequest = async (...args) => {
+    const result = await originalDshRequest(...args);
+    adapter.project.wechat.voice.chats[privateKey] = false;
+    return result;
+  };
+  forwarded = null;
+  await adapter.enqueueVoice({ ...payload, rawid: 'c'.repeat(64) });
+  assert.equal(forwarded, null);
+  assert.equal(adapter.voiceProcessing.size, 0);
   assert.equal(forwarded.type, 1);
   assert.equal(forwarded.content, '晚上见');
   assert.equal(forwarded.voice, undefined);
