@@ -767,6 +767,10 @@ export class HookOneBot {
       this.status.last_error=String(error?.message??'VOICE_ASR_FAILED').slice(0,100);
       console.warn(new Date().toISOString(),'WeChatAgent voice ASR failed:',this.status.last_error);
     }finally{this.voiceProcessing.delete(rawId);}
+    // Re-read the allowlist and voice policy after the potentially long ASR
+    // request. A user disabling voice mid-transcription must stop this event.
+    this.reload();
+    if(!this.allowed(kind,target)||!voiceEnabledFor(this.project.wechat,'wechat:'+kind+':'+target))return;
     this.enqueuePlain({...payload,type:1,content:transcript||'[语音消息未能识别]',voice:undefined});
   }
   flush() {
