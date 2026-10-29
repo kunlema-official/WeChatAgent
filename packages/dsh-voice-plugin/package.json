@@ -4,5 +4,10 @@
   "private": true,
   "type": "module",
   "main": "index.mjs",
-  "description": "Internal WeChatAgent DSH voice service: local ASR integration and MiMo/Edge TTS-to-SILK generation"
+  "description": "Internal WeChatAgent DSH voice service: local ASR integration and MiMo/Edge TTS-to-SILK generation",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
 }

@@ -729,10 +729,11 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
   assert.ok(patch.includes('name: cordis:group'));
   assert.ok(patch.includes('group: true'));
   const voicePackage = JSON.parse(fs.readFileSync(new URL('../packages/dsh-voice-plugin/package.json', import.meta.url), 'utf8'));
-  assert.equal(voicePackage.dsh?.bundle?.patch, undefined,
-    'the voice service is mounted by the bridge bundle and must not contribute a second bundle layer');
-  assert.equal(fs.existsSync(new URL('../packages/dsh-voice-plugin/cordis.patch.yml', import.meta.url)), false,
-    'the internal voice package must not keep a competing self-registration patch');
+  assert.equal(voicePackage.dsh?.bundle?.patch, './cordis.patch.yml',
+    'keep the no-op bundle declaration so already-configured DSH profiles remain compatible');
+  const voiceBundlePatch = fs.readFileSync(new URL('../packages/dsh-voice-plugin/cordis.patch.yml', import.meta.url), 'utf8');
+  assert.match(voiceBundlePatch, /^\\s*\\[\\]\\s*$/,
+    'the voice package compatibility layer must be empty; only the social bridge may insert the voice entry');
   const voiceEntry = fs.readFileSync(new URL('../packages/dsh-voice-plugin/index.mjs', import.meta.url), 'utf8');
   assert.match(voiceEntry, /export const inject = \['speechToText'\]/);
   assert.match(voiceEntry, /registerVoiceService\(ctx, service\)/);
