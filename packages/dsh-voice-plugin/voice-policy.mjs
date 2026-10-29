@@ -9,6 +9,11 @@ export function voiceEnabledFor(wechat, conversationKey) {
   return voice.enabled === true;
 }
 
+export function voiceReplyLimitFor(wechat) {
+  const value = wechat?.voice?.maxReplyChars;
+  return Number.isInteger(value) && value >= 10 && value <= 240 ? value : 120;
+}
+
 export function validateVoiceSettings(voice) {
   if (voice === undefined) return;
   const fail = message => { throw new Error(message); };
