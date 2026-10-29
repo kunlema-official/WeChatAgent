@@ -732,8 +732,9 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
   assert.equal(voicePackage.dsh?.bundle?.patch, './cordis.patch.yml',
     'keep the no-op bundle declaration so already-configured DSH profiles remain compatible');
   const voiceBundlePatch = fs.readFileSync(new URL('../packages/dsh-voice-plugin/cordis.patch.yml', import.meta.url), 'utf8');
-  assert.match(voiceBundlePatch, /^\\s*\\[\\]\\s*$/,
+  assert.equal(voiceBundlePatch.trim().split(/\r?\n/).at(-1), '[]',
     'the voice package compatibility layer must be empty; only the social bridge may insert the voice entry');
+  assert.equal(voiceBundlePatch.split('\n').filter(line => line.trim().startsWith('- id:')).length, 0);
   const voiceEntry = fs.readFileSync(new URL('../packages/dsh-voice-plugin/index.mjs', import.meta.url), 'utf8');
   assert.match(voiceEntry, /export const inject = \['speechToText'\]/);
   assert.match(voiceEntry, /registerVoiceService\(ctx, service\)/);
