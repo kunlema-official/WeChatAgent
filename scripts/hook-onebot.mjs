@@ -234,13 +234,8 @@ export class HookOneBot {
       // not carry the original reason, so never blindly resubmit those.
       let rejectedBusy;
       if(attempt?.state==='rejected'){
-        // Voice and text share one delivery ID. A definitive native voice
-        // rejection is safe to replace with text; an uncertain submission is
-        // never stored as rejected and must remain terminal.
-        if(attempt.rejection?.code==='API_HTTP_429' ||
-          (attempt.voiceDigest&&attempt.rejection?.code==='NATIVE_SEND_REJECTED')){
-          rejectedBusy=attempt;attempt=null;
-        }else throw new AdapterError(attempt.rejection?.code??'NATIVE_SEND_REJECTED',{rejected:true,attempted:false,delivery_id:deliveryId??operation});
+        if(attempt.rejection?.code==='API_HTTP_429'){rejectedBusy=attempt;attempt=null;}
+        else throw new AdapterError(attempt.rejection?.code??'NATIVE_SEND_REJECTED',{rejected:true,attempted:false,delivery_id:deliveryId??operation});
       }
       if(attempt?.state==='confirmed')attempt=null;
       this.reload();
