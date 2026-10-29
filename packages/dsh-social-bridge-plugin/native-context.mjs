@@ -20,7 +20,7 @@ import {bindFileTools} from './file-tools.mjs';
 import {trackToolOrigins} from './plugin-catalog.mjs';
 import {ASSISTANT_ACCESS,assistantSenderAllowed,assistantGroupChatAllowed,assistantControlAllowed} from './assistant-policy.mjs';
 import {conversationAccess,allowedConversation} from './conversation-policy.mjs';
-import { voiceEnabledFor } from '../dsh-voice-plugin/voice-policy.mjs';
+import { voiceEnabledFor, voiceReplyLimitFor } from '../dsh-voice-plugin/voice-policy.mjs';
 import { getVoiceService } from '../dsh-voice-plugin/registry.mjs';
 import {readWorkMode,createWorkModeSlots,scopeHistory,assistantChatInstructionsFor,ASSISTANT_PRESET,WORK_MODE_POLICY} from './work-modes.mjs';
 import {createSessionGroups,groupFault} from './session-groups.mjs';
@@ -57,9 +57,9 @@ export function assistantReplyText(message) {
 }
 const clean = (text, limit=60) => String(text ?? '').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim().slice(0,limit);
 function finalOutputHint(root,key){
-  let enabled=false;
-  try{const config=JSON.parse(fs.readFileSync(path.join(root,'config','wechatagent.json'),'utf8'));enabled=voiceEnabledFor(config.wechat,key);}catch{}
-  return finalOutputHintForVoice(enabled);
+  let enabled=false,maxReplyChars=120;
+  try{const config=JSON.parse(fs.readFileSync(path.join(root,'config','wechatagent.json'),'utf8'));enabled=voiceEnabledFor(config.wechat,key);maxReplyChars=voiceReplyLimitFor(config.wechat);}catch{}
+  return finalOutputHintForVoice(enabled,maxReplyChars);
 }
 
 export function sessionTitle(key, conversationName, personaName) {
