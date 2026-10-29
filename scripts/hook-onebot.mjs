@@ -678,7 +678,7 @@ export class HookOneBot {
             if (error?.data?.attempted === true) throw error;
             const reason = error instanceof AdapterError ? error.message : 'VOICE_SEND_FAILED';
             this.status.last_error = reason;
-            const voiceOperation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\\0'+text);
+            const voiceOperation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\0'+text);
             const textOperation=this.textDeliveries.key(kind,target,deliveryId,text);
             let rejectedVoice=null;
             // Keep the ordinary text sender's rejection rules strict. Only this
