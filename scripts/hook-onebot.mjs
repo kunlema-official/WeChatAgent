@@ -385,10 +385,7 @@ export class HookOneBot {
       if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
       // Recheck before paid TTS work: the chat setting can change after the
       // initial health check and must still be authoritative.
-      if(!voiceEnabledFor(this.project.wechat,conversationKey)){
-        const fallback=await this.send(kind,target,text,deliveryId,proactive);
-        return {...fallback,media_type:'text-fallback',voiceFallback:'voice_disabled'};
-      }
+      if(!voiceEnabledFor(this.project.wechat,conversationKey))return await fallbackText('voice_disabled');
       const wxid=await this.resolveTarget(kind,target);
       const operation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\0'+text);
       let attempt=this.textDeliveries.get(operation);
