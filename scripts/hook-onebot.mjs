@@ -234,8 +234,13 @@ export class HookOneBot {
       // not carry the original reason, so never blindly resubmit those.
       let rejectedBusy;
       if(attempt?.state==='rejected'){
-        if(attempt.rejection?.code==='API_HTTP_429'){rejectedBusy=attempt;attempt=null;}
-        else throw new AdapterError(attempt.rejection?.code??'NATIVE_SEND_REJECTED',{rejected:true,attempted:false,delivery_id:deliveryId??operation});
+        // Voice and text share one delivery ID. A definitive native voice
+        // rejection is safe to replace with text; an uncertain submission is
+        // never stored as rejected and must remain terminal.
+        if(attempt.rejection?.code==='API_HTTP_429' ||
+          (attempt.voiceDigest&&attempt.rejection?.code==='NATIVE_SEND_REJECTED')){
+          rejectedBusy=attempt;attempt=null;
+        }else throw new AdapterError(attempt.rejection?.code??'NATIVE_SEND_REJECTED',{rejected:true,attempted:false,delivery_id:deliveryId??operation});
       }
       if(attempt?.state==='confirmed')attempt=null;
       this.reload();
@@ -341,30 +346,37 @@ export class HookOneBot {
     this.reload();
     if (!this.allowed(kind,target)) fail('CONVERSATION_NOT_ALLOWED');
     const conversationKey='wechat:'+kind+':'+target;
-    if (!voiceEnabledFor(this.project.wechat,conversationKey)) {
+    const key=`${kind}:${target}`;
+    let ownsVoiceLock=false;
+    const fallbackText=async reason=>{
+      // A fallback can happen while this method owns the per-chat/global voice
+      // locks. Release only our own locks before delegating to send(), otherwise
+      // the ordinary text sender rejects its own fallback as SENDER_BUSY.
+      if(ownsVoiceLock){
+        this.targetsSending.delete(key);
+        this.voiceSending=false;
+        ownsVoiceLock=false;
+      }
       const fallback=await this.send(kind,target,text,deliveryId,proactive);
-      return {...fallback,media_type:'text-fallback',voiceFallback:'voice_disabled'};
-    }
+      // A confirmed retry may already refer to a voice message; never relabel it
+      // as text merely because the current attempt entered a fallback branch.
+      if(fallback?.media_type==='wechat-voice')return fallback;
+      return {...fallback,media_type:'text-fallback',voiceFallback:reason};
+    };
+    if (!voiceEnabledFor(this.project.wechat,conversationKey)) return await fallbackText('voice_disabled');
     const identity=await this.checkNative();
     if (!this.status.native_voice_send) {
       this.status.voice_output='text-fallback-native-sender-missing';
-      const fallback=await this.send(kind,target,text,deliveryId,proactive);
-      return {...fallback,media_type:'text-fallback',voiceFallback:'native_sender_unavailable'};
+      return await fallbackText('native_sender_unavailable');
     }
 
     // The native voice constructor is process-global. Serialize voice sends even
     // when ordinary text sends to different chats can proceed independently.
-    if (this.voiceSending) {
-      const fallback=await this.send(kind,target,text,deliveryId,proactive);
-      return {...fallback,media_type:'text-fallback',voiceFallback:'voice_sender_busy'};
-    }
-    const key=`${kind}:${target}`;
-    if(this.targetsSending.has(key)||this.targetsSending.size>=(this.hook.maxConcurrentSends??4)) {
-      const fallback=await this.send(kind,target,text,deliveryId,proactive);
-      return {...fallback,media_type:'text-fallback',voiceFallback:'sender_busy'};
-    }
+    if (this.voiceSending) return await fallbackText('voice_sender_busy');
+    if(this.targetsSending.has(key)||this.targetsSending.size>=(this.hook.maxConcurrentSends??4)) return await fallbackText('sender_busy');
     this.voiceSending=true;
     this.targetsSending.add(key);
+    ownsVoiceLock=true;
     let asciiCopy='';
     let generatedArtifactPath='';
     let closeVoiceGate=()=>{};
@@ -382,7 +394,10 @@ export class HookOneBot {
       let attempt=this.textDeliveries.get(operation);
       if(attempt&&(attempt.account!==identity.account||attempt.wxid!==wxid))fail('TEXT_DELIVERY_ACCOUNT_MISMATCH');
       if(attempt&&attempt.text!==text)fail('TEXT_DELIVERY_ID_CONFLICT');
-      if(attempt?.state==='confirmed'&&(deliveryId||Date.now()-attempt.confirmedAt<60000))return {...attempt.response,reused:true,media_type:'wechat-voice'};
+      if(attempt?.state==='confirmed'&&(deliveryId||Date.now()-attempt.confirmedAt<60000)){
+        const mediaType=attempt.response?.media_type??(attempt.voiceDigest?'wechat-voice':'text-fallback');
+        return {...attempt.response,reused:true,media_type:mediaType};
+      }
       let rejectedBusy;
       if(attempt?.state==='rejected'){
         if(attempt.rejection?.code==='API_HTTP_429'){rejectedBusy=attempt;attempt=null;}
@@ -400,10 +415,7 @@ export class HookOneBot {
         // so disabling voice during synthesis cannot cause a late voice send.
         this.reload();
         if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
-        if(!voiceEnabledFor(this.project.wechat,conversationKey)){
-          const fallback=await this.send(kind,target,text,deliveryId,proactive);
-          return {...fallback,media_type:'text-fallback',voiceFallback:'voice_disabled_during_synthesis'};
-        }
+        if(!voiceEnabledFor(this.project.wechat,conversationKey))return await fallbackText('voice_disabled_during_synthesis');
         const voiceDigest=crypto.createHash('sha256').update(fs.readFileSync(artifact.path)).digest('hex');
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
@@ -413,6 +425,14 @@ export class HookOneBot {
         // The upstream Hook intentionally defaults voice sending off. Open its
         // expiring in-memory switch only for this already-authorized native request.
         closeVoiceGate=await this.openVoiceSendGate(identity.account);
+        // Close the final race window: settings may change while the native
+        // gate is opening. Never submit a voice after the current chat opted out.
+        this.reload();
+        if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
+        if(!voiceEnabledFor(this.project.wechat,conversationKey)){
+          await closeVoiceGate();closeVoiceGate=async()=>{};
+          return await fallbackText('voice_disabled_before_native_send');
+        }
         attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,checkedVoiceIds:[],
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
         this.textDeliveries.put(attempt); // Persist before native submission; never blindly resend an uncertain voice.
@@ -487,8 +507,11 @@ export class HookOneBot {
       await closeVoiceGate();
       if(asciiCopy)try{fs.unlinkSync(asciiCopy);}catch{}
       if(generatedArtifactPath)try{fs.unlinkSync(generatedArtifactPath);}catch{}
-      this.targetsSending.delete(key);
-      this.voiceSending=false;
+      if(ownsVoiceLock){
+        this.targetsSending.delete(key);
+        this.voiceSending=false;
+        ownsVoiceLock=false;
+      }
     }
   }
   asciiVoiceSendPath(source) {
