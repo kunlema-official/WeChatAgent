@@ -19,7 +19,7 @@ import { ContextMaintenance } from './core/context-maintenance.js';
 import {HistoryStore} from '../../../packages/dsh-social-bridge-plugin/history-store.mjs';
 import {scopeHistory} from '../../../packages/dsh-social-bridge-plugin/work-modes.mjs';
 import {activeReaderAccount} from '../../../scripts/reader-account-state.mjs';
-import { voiceEnabledFor as isVoiceEnabledFor } from '../../../packages/dsh-voice-plugin/voice-policy.mjs';
+import { voiceEnabledFor as isVoiceEnabledFor, voiceReplyLimitFor } from '../../../packages/dsh-voice-plugin/voice-policy.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const configPath = path.resolve(process.argv[2] ?? path.join(root, 'config.social.json'));
@@ -83,6 +83,7 @@ const engine = new SocialEngine({ buffer,connection, roleFor: key => personaFor(
   sendSticker: (message,id,options)=>adapter.sendSticker({kind:message.kind,target:message.conversation_id,id,...options}),
   sendVoice: (message,text,options)=>adapter.sendVoice({kind:message.kind,target:message.conversation_id,text,deliveryId:options?.deliveryId}),
   voiceEnabledFor: key => { try { const current = config.search_policy_file ? JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat : wechat; return isVoiceEnabledFor(current,key); } catch { return false; } },
+  voiceReplyMaxCharsFor: key => { try { const current = config.search_policy_file ? JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat : wechat; return voiceReplyLimitFor(current); } catch { return 120; } },
   send: (message, text, options) => adapter.sendText({ kind: message.kind, target: message.conversation_id, text,deliveryId:options?.deliveryId }), log });
 const memberSettings=()=>config.search_policy_file?JSON.parse(fs.readFileSync(config.search_policy_file,'utf8').replace(/^\uFEFF/,'' )).wechat:wechat;
 const memberHistory=scopeHistory(baseHistoryStore,()=> 'assistant-chat',{fixedMode:'assistant-chat'});
