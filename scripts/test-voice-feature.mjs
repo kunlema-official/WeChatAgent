@@ -680,6 +680,8 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
     'DSH must load the speech service and SenseVoice provider before the voice service, then the bridge');
   assert.equal(pluginIds.filter(id => id === 'dsh-voice-plugin').length, 1,
     'the primary WeChatAgent patch must register the voice service exactly once');
+  assert.equal(patch.split("startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')").length - 1, 2,
+    'custom speech rows must yield to the official optional bundle when that bundle is selected');
   const voiceEntry = fs.readFileSync(new URL('../packages/dsh-voice-plugin/index.mjs', import.meta.url), 'utf8');
   assert.match(voiceEntry, /export const inject = \['speechToText'\]/);
   assert.match(voiceEntry, /registerVoiceService\(ctx, service\)/);
