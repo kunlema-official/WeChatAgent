@@ -351,7 +351,7 @@ export class HookOneBot {
       const attempt=this.textDeliveries.get(voiceOperation);
       if(attempt?.state!=='rejected'||!attempt.voiceDigest||
         !['NATIVE_SEND_REJECTED','NATIVE_VOICE_SEND_REJECTED'].includes(attempt.rejection?.code))return null;
-      this.textDeliveries.delete(voiceOperation);
+      this.textDeliveries.remove(voiceOperation);
       return {operation:voiceOperation,attempt};
     };
     const fallbackText=async reason=>{
