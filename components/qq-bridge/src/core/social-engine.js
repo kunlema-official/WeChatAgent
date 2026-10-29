@@ -109,9 +109,9 @@ export class SocialEngine {
   constructor({ buffer, decide, send, sendVoice, roleFor = () => '', personaNameFor = () => '',workModeFor=()=> 'social', wakeWords = [], mode = 'hybrid',
     assistantBatchMs=650,assistantChatOnly=false,maxTextPartsFor=()=>2,notebookEnabledFor=()=>false,batchMs = 3000, minIntervalMs = 15000, privateMinIntervalMs = 1000,
     maxPerMinute = 3, maxPerTenMinutes = 10, stickerChoicesFor = async()=>[], sendSticker,
-    stickerPolicyFor=()=>({enabled:true,labelCache:true}),stickerLabelsFor=async()=>[],saveStickerLabels=async()=>{},voiceEnabledFor=()=>false,
+    stickerPolicyFor=()=>({enabled:true,labelCache:true}),stickerLabelsFor=async()=>[],saveStickerLabels=async()=>{},voiceEnabledFor=()=>false,voiceReplyMaxCharsFor=()=>120,
     assistantAccess=()=>false,assistantControl,modeFor,searchFor=async()=>null,modelSearchReady=async()=>false,searchPolicyFor=()=>SEARCH_DEFAULTS,stickerSelect=selectStickerChoices,deliveryRetry={},connection=null,log = () => {} }) {
-    Object.assign(this, { buffer, decide, send, sendVoice, roleFor, personaNameFor,workModeFor,voiceEnabledFor, wakeWords, mode, batchMs,
+    Object.assign(this, { buffer, decide, send, sendVoice, roleFor, personaNameFor,workModeFor,voiceEnabledFor,voiceReplyMaxCharsFor, wakeWords, mode, batchMs,
       minIntervalMs, privateMinIntervalMs, maxPerMinute, maxPerTenMinutes, log });
     if (![maxPerMinute,maxPerTenMinutes].every(value => Number.isSafeInteger(value) && value > 0)) throw new TypeError('Reply quotas must be positive integers');
     this.connection=connection;if(connection)connection.onBoundary=()=>this.suspendConnection();
@@ -250,6 +250,7 @@ export class SocialEngine {
       let savedRequest=this.buffer.pendingRequests.get(key);
       const workMode=this.workModeFor(key);
       const voiceReplyEnabled=(()=>{try{return this.voiceEnabledFor(key)===true;}catch{return false;}})();
+      const voiceReplyMaxChars=(()=>{try{const value=this.voiceReplyMaxCharsFor(key);return Number.isInteger(value)&&value>=10&&value<=240?value:120;}catch{return 120;}})();
       const unread=this.unreadFor(key,20);
 
       if(savedRequest&&!savedRequest.rowIds.every(id=>unread.some(row=>row.id===id))){this.buffer.forgetRequest(key);savedRequest=null;}
@@ -349,7 +350,7 @@ export class SocialEngine {
         images: decisionImages,webReaderUrls: incomingWebUrls(chatRows),memberObservations:memberObservations(key,chatRows),
         searchOptOut:this.assistantChatOnly||/(?:不要|不用|别)(?:联网|搜索|查)/.test([...chatRows].reverse().find(row=>!row.outgoing&&!row.forwardedRecord&&row.interaction!=='pat')?.text??''),
         searchPrivateNames:[...new Set(chatRows.filter(row=>!row.outgoing&&!row.forwardedRecord).map(row=>row.sender_name).filter(name=>typeof name==='string'&&name.length>=2&&name.length<=80))].slice(0,50),
-        batchId: crypto.createHash('sha256').update(JSON.stringify([key,rows.map(row=>row.id),policyKey,searchKey,stickerChoices,decisionImages,knownLabels,contextNotice?.id,'dsh-native-only-v1',wakeMode,'output-format-v2',voiceReplyEnabled])).digest('hex') };
+        batchId: crypto.createHash('sha256').update(JSON.stringify([key,rows.map(row=>row.id),policyKey,searchKey,stickerChoices,decisionImages,knownLabels,contextNotice?.id,'dsh-native-only-v1',wakeMode,'output-format-v2',voiceReplyEnabled,voiceReplyMaxChars])).digest('hex') };
       metadata.batchId=crypto.createHash('sha256').update(metadata.batchId+'\0reply-messages:'+maxTextParts).digest('hex');
       if(wakeContext)metadata.batchId=crypto.createHash('sha256').update(metadata.batchId+'\0'+JSON.stringify(wakeContext)).digest('hex');
       const searchRows=chatRows;
@@ -369,7 +370,7 @@ export class SocialEngine {
         }
       }
       const nativeSignature='';
-      const signature=crypto.createHash('sha256').update(JSON.stringify([policyKey,searchKey,wakeMode,role,metadata.personaName,nativeSignature,workMode,voiceReplyEnabled])).digest('hex');
+      const signature=crypto.createHash('sha256').update(JSON.stringify([policyKey,searchKey,wakeMode,role,metadata.personaName,nativeSignature,workMode,voiceReplyEnabled,voiceReplyMaxChars])).digest('hex');
       if(savedRequest&&savedRequest.signature!==signature){this.buffer.forgetRequest(key);this.dirty.add(key);return;}
       if(!remembered&&chatRows.length){
         if(savedRequest){
@@ -402,8 +403,9 @@ export class SocialEngine {
       if(workMode==='assistant'&&(!rows.every(row=>this.assistantAllowed(key,row)))){this.buffer.markProcessed(key,throughId);this.decisions.delete(key);this.buffer.forgetReply(key);completed=true;this.log('[Assistant] '+key+' result_discarded reason=access_changed');return;}
       if(policy.enabled)for(const choice of metadata.memeChoices??[])if(choice.source==='dsh-meme'&&/^[a-f0-9]{64}$/.test(choice.id??'')&&cleanStickerLabel(choice)&&!stickerChoices.some(item=>item.id===choice.id))stickerChoices.push(choice);
       const allowVoiceReply=(()=>{try{return this.voiceEnabledFor(key)===true;}catch{return false;}})();
+      const maxVoiceChars=(()=>{try{const value=this.voiceReplyMaxCharsFor(key);return Number.isInteger(value)&&value>=10&&value<=240?value:120;}catch{return 120;}})();
       const resolved=!remembered&&chatRows.length
-        ? await resolveSocialDecision({rawOutput,key,metadata,decide:(...args)=>decideCurrent(...args),stickerRefs,allowStickerCaption:true,allowTextParts:metadata.fishNotebookDocument!==true,maxTextParts:metadata.replyMaxMessages??2,maxChars:workMode==='assistant'&&!this.assistantChatOnly?12000:1200,allowVoiceReply,log:this.log})
+        ? await resolveSocialDecision({rawOutput,key,metadata,decide:(...args)=>decideCurrent(...args),stickerRefs,allowStickerCaption:true,allowTextParts:metadata.fishNotebookDocument!==true,maxTextParts:metadata.replyMaxMessages??2,maxChars:workMode==='assistant'&&!this.assistantChatOnly?12000:1200,allowVoiceReply,maxVoiceChars,log:this.log})
         : {output:null,result:remembered?.result??{decision:'RESPOND',text:LOCKED_BEHAVIOR_REPLY}};
       const {output,result}=resolved;
       if(result.decision==='RESPOND'&&[result.text,...(result.textParts??[])].some(hasReasoningControl)){
