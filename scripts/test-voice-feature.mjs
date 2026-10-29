@@ -723,11 +723,15 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
     'DSH must load the speech service and SenseVoice provider before the voice service, then the bridge');
   assert.equal(pluginIds.filter(id => id === 'dsh-voice-plugin').length, 1,
     'the primary WeChatAgent patch must register the voice service exactly once');
-  assert.equal(patch.split("startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')").length - 1, 1,
-    'the fallback STT group is disabled as a unit when the official optional bundle is selected');
-  assert.ok(patch.includes('id: wechat-voice-stt-fallback'));
-  assert.ok(patch.includes('name: cordis:group'));
-  assert.ok(patch.includes('group: true'));
+  assert.equal(patch.split("startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')").length - 1, 2,
+    'both fallback STT child rows are disabled when the official optional bundle is selected');
+  assert.match(patch, /id: wechat-voice-stt-fallback\n\s+name: cordis:group\n\s+group: true\n\s+config:/,
+    'the fallback rows must be nested so their loader ids are namespaced');
+  const fallbackStart = patch.indexOf('    - id: wechat-voice-stt-fallback');
+  const fallbackEnd = patch.indexOf('    - id: dsh-voice-plugin', fallbackStart);
+  const fallbackGroup = patch.slice(fallbackStart, fallbackEnd);
+  assert.equal((fallbackGroup.match(/disabled: !!js/g) ?? []).length, 2,
+    'disable children individually; DSH group rows themselves are always enabled');
   const voicePackage = JSON.parse(fs.readFileSync(new URL('../packages/dsh-voice-plugin/package.json', import.meta.url), 'utf8'));
   assert.equal(voicePackage.dsh?.bundle?.patch, './cordis.patch.yml',
     'keep the no-op bundle declaration so already-configured DSH profiles remain compatible');

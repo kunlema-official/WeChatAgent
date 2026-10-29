@@ -1,18 +1,19 @@
 - insert:
-    # If the official Voice Input bundle is active, disable this group as a unit:
-    # disabled child rows still collide by id during Cordis tree composition.
+    # Child IDs are namespaced under this group. Disable each fallback child when
+    # the official Voice Input bundle is active; Cordis groups themselves always run.
     - id: wechat-voice-stt-fallback
       name: cordis:group
       group: true
-      disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')"
       config:
         - id: speech-to-text
           name: '@deepseek-ai/dsh-experimental-speech-to-text'
+          disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')"
           config:
             defaultProvider: sensevoice-local
             language: auto
         - id: speech-to-text-sensevoice
           name: '@deepseek-ai/dsh-experimental-speech-to-text-sensevoice'
+          disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')"
           config:
             dataRoot: !!js dshHomePath('speech-to-text', 'sensevoice')
     # This patch is the sole owner of the voice-service row; the voice package is
