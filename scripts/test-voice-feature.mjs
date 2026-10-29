@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { voiceEnabledFor, validateVoiceSettings } from '../packages/dsh-voice-plugin/voice-policy.mjs';
+import { voiceEnabledFor, voiceReplyLimitFor, validateVoiceSettings } from '../packages/dsh-voice-plugin/voice-policy.mjs';
 import { parseSocialDecision, resolveSocialDecision } from '../components/qq-bridge/src/core/decision-format.js';
 import { replyDeliveryParts } from '../components/qq-bridge/src/core/message-buffer.js';
 import { SOCIAL_FINAL_OUTPUT_HINT, VOICE_REPLY_ENABLED_NOTICE, VOICE_REPLY_DISABLED_NOTICE, cleanChatPrompt, finalOutputHintForVoice } from '../packages/dsh-social-bridge-plugin/prompt-context.mjs';
@@ -44,17 +44,22 @@ test('the DSH final output hint uses one current per-chat voice policy', () => {
   const stalePrompt = '新的微信好友私聊消息。\n<untrusted_chat>晚上见</untrusted_chat>\n' + enabled;
   assert.doesNotMatch(cleanChatPrompt(stalePrompt), /RESPOND_VOICE/,
     'voice instructions from an older turn must not override the current chat setting');
+  const customHint = finalOutputHintForVoice(true, 80);
+  assert.match(customHint, /不超过80个字符/);
+  assert.doesNotMatch(cleanChatPrompt('新的微信好友私聊消息。\\n<untrusted_chat>晚上见</untrusted_chat>\\n' + customHint), /RESPOND_VOICE/,
+    'configured voice hints must also be removed when replaying a stale prompt');
 
   const nativeContext = fs.readFileSync(new URL('../packages/dsh-social-bridge-plugin/native-context.mjs', import.meta.url), 'utf8');
   assert.match(nativeContext, /enabled=voiceEnabledFor\(config\.wechat,key\)/);
-  assert.match(nativeContext, /return finalOutputHintForVoice\(enabled\)/,
-    'the actual DSH request must use the centralized final hint');
+  assert.match(nativeContext, /return finalOutputHintForVoice\(enabled,maxReplyChars\)/,
+    'the actual DSH request must use the centralized final hint and configured limit');
 
   const engineSource = fs.readFileSync(new URL('../components/qq-bridge/src/core/social-engine.js', import.meta.url), 'utf8');
-  assert.match(engineSource, /'output-format-v2',voiceReplyEnabled\]\)/,
-    'voice enablement must participate in the batch identity');
-  assert.match(engineSource, /nativeSignature,workMode,voiceReplyEnabled\]\)/,
+  assert.match(engineSource, /'output-format-v2',voiceReplyEnabled,voiceReplyMaxChars\]\)/,
+    'voice enablement and length limit must participate in the batch identity');
+  assert.match(engineSource, /nativeSignature,workMode,voiceReplyEnabled,voiceReplyMaxChars\]\)/,
     'a pending request must be invalidated when the voice setting changes');
+  assert.match(engineSource, /voiceReplyMaxCharsFor/);
   assert.match(engineSource, /const allowVoiceReply=\(\(\)=>\{try\{return this\.voiceEnabledFor\(key\)===true;/,
     'voice output must be rechecked against the current chat setting at parse time');
 });
@@ -65,6 +70,8 @@ test('voice policy honors account defaults and per-chat overrides', () => {
   assert.equal(voiceEnabledFor({ voice: { enabled: true, chats: { [privateKey]: false } } }, privateKey), false);
   assert.equal(voiceEnabledFor({ voice: { enabled: false, chats: { [groupKey]: true } } }, groupKey), true);
   assert.equal(voiceEnabledFor({ voice: { enabled: true, chats: {} } }, 'wechat:private:not-numeric'), false);
+  assert.equal(voiceReplyLimitFor({ voice: { maxReplyChars: 80 } }), 80);
+  assert.equal(voiceReplyLimitFor({ voice: { maxReplyChars: 500 } }), 120);
   assert.throws(() => validateVoiceSettings({ enabled: true, chats: { [privateKey]: 'yes' } }), /Invalid per-chat voice setting/);
 });
 
@@ -128,7 +135,8 @@ test('voice settings accept MiMo and explicit Edge providers without storing an 
 test('the production social bridge wires the verified per-chat voice policy into decision parsing', () => {
   const engine = fs.readFileSync(new URL('../components/qq-bridge/src/core/social-engine.js', import.meta.url), 'utf8');
   const bridge = fs.readFileSync(new URL('../components/qq-bridge/src/social-bridge.js', import.meta.url), 'utf8');
-  assert.match(bridge, /import \{ voiceEnabledFor as isVoiceEnabledFor \} from '\.\.\/\.\.\/\.\.\/packages\/dsh-voice-plugin\/voice-policy\.mjs';/);
+  assert.match(bridge, /import \{ voiceEnabledFor as isVoiceEnabledFor, voiceReplyLimitFor \} from '\.\.\/\.\.\/\.\.\/packages\/dsh-voice-plugin\/voice-policy\.mjs';/);
+  assert.match(bridge, /voiceReplyMaxCharsFor: key =>/);
   assert.match(bridge, /voiceEnabledFor: key => \{[^}]*isVoiceEnabledFor\(current,key\)/);
   assert.match(bridge, /sendVoice: \(message,text,options\)=>adapter\.sendVoice\(\{kind:message\.kind,target:message\.conversation_id,text,deliveryId:options\?\.deliveryId\}\)/, 'the production social bridge must route voice reply parts to the native-capable adapter');
   assert.match(engine, /constructor\(\{ buffer, decide, send, sendVoice,/);
@@ -199,6 +207,8 @@ test('the model cannot force voice replies in chats where voice is disabled', ()
   });
   const longText = '好'.repeat(121);
   assert.equal(parseSocialDecision(`RESPOND_VOICE: ${longText}`, {}, { allowVoiceReply: true }).replyMode, 'text');
+  assert.equal(parseSocialDecision(`RESPOND_VOICE: ${'好'.repeat(81)}`, {}, { allowVoiceReply: true, maxVoiceChars: 80 }).replyMode, 'text');
+  assert.equal(parseSocialDecision(`RESPOND_VOICE: ${'好'.repeat(80)}`, {}, { allowVoiceReply: true, maxVoiceChars: 80 }).replyMode, 'voice');
   assert.equal(parseSocialDecision('RESPOND: 普通文字').replyMode, undefined);
 });
 
@@ -214,6 +224,13 @@ test('format repair explicitly carries the trusted per-chat voice policy', async
   const enabled = parseSocialDecision('RESPOND_VOICE: 好呀', {}, { allowVoiceReply: true });
   const parts = replyDeliveryParts({ decision: 'RESPOND', text: enabled.text, replyMode: enabled.replyMode }, 'a'.repeat(64));
   assert.equal(parts[0].voice, true);
+  let configuredRepairPrompt = '';
+  await resolveSocialDecision({
+    rawOutput: 'RESPOND_VOICE: <think>hidden</think>你好', key: privateKey, metadata: { batchId: 'c'.repeat(64) },
+    decide: async (_key, prompt) => { configuredRepairPrompt = prompt; return 'RESPOND: 好呀'; },
+    allowVoiceReply: true, maxVoiceChars: 80,
+  });
+  assert.match(configuredRepairPrompt, /不超过80个字符/);
 });
 
 
@@ -274,6 +291,23 @@ test('the current native Hook capability gate falls back to text without invokin
   assert.equal(result.media_type, 'text-fallback');
   assert.equal(result.voiceFallback, 'native_sender_unavailable');
   assert.equal(result.text, '你好呀');
+});
+
+test('configured voice reply length limit falls back before TTS and native preflight', async () => {
+  const adapter = Object.create(HookOneBot.prototype);
+  adapter.directory = process.cwd();
+  adapter.project = { wechat: { whitelist: { private: ['123'], groups: [] }, voice: { enabled: true, maxReplyChars: 80, chats: {} } } };
+  adapter.hook = { maxConcurrentSends: 4 };
+  adapter.status = { native_voice_send: true };
+  adapter.reload = () => {};
+  adapter.allowed = () => true;
+  adapter.checkNative = async () => { throw new Error('native preflight must not run for an over-limit voice reply'); };
+  adapter.send = async (_kind, _target, text) => ({ delivered: 'database-confirmed', text });
+  adapter.dshRequest = async () => { throw new Error('paid TTS must not run for an over-limit voice reply'); };
+  const result = await adapter.sendVoice('private', '123', '好'.repeat(81), 'c'.repeat(64), null);
+  assert.equal(result.media_type, 'text-fallback');
+  assert.equal(result.voiceFallback, 'voice_reply_too_long');
+  assert.equal(result.text, '好'.repeat(81));
 });
 
 test('disabling voice during TTS prevents a late native send and falls back to text', async t => {
