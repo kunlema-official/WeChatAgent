@@ -310,6 +310,49 @@ test('configured voice reply length limit falls back before TTS and native prefl
   assert.equal(result.text, '好'.repeat(81));
 });
 
+test('direct text fallback replaces a rejected voice attempt under the same delivery ID', async t => {
+  const root = tempRoot(t);
+  const deliveryId = 'd'.repeat(64);
+  const text = '好'.repeat(81);
+  const store = new TextDeliveryStore(path.join(root, 'state', 'text-deliveries'));
+  const operation = store.key('private', '123', deliveryId, 'VOICE\0' + text);
+  const now = Date.now();
+  const rejection = { code: 'NATIVE_SEND_REJECTED', at: now };
+  store.put({ version: 1, key: operation, deliveryId, account: 'fixture-account', wxid: 'wxid_fixture', text, baseline: [],
+    voiceDigest: 'a'.repeat(64), checkedVoiceIds: [], startedAt: now, state: 'rejected', rejection, firstRejection: rejection });
+  const adapter = Object.create(HookOneBot.prototype);
+  adapter.directory = root;
+  adapter.project = { wechat: { whitelist: { private: ['123'], groups: [] }, voice: { enabled: true, maxReplyChars: 80, chats: {} } } };
+  adapter.hook = { maxConcurrentSends: 4 };
+  adapter.status = { native_voice_send: true };
+  adapter.textDeliveries = store;
+  adapter.reload = () => {};
+  adapter.allowed = () => true;
+  adapter.checkNative = async () => { throw new Error('native preflight must not run for an over-limit voice reply'); };
+  adapter.dshRequest = async () => { throw new Error('paid TTS must not run for an over-limit voice reply'); };
+  let textCalls = 0, textSubmissions = 0;
+  adapter.send = async (_kind, _target, body, id) => {
+    textCalls++;
+    const current = store.get(operation);
+    if (current?.state === 'confirmed') return { ...current.response, reused: true };
+    assert.equal(current, null, 'a rejected voice attempt must be detached before text fallback');
+    textSubmissions++;
+    const response = { delivered: 'database-confirmed', text: body, media_type: 'text' };
+    store.put({ version: 1, key: operation, deliveryId: id, account: 'fixture-account', wxid: 'wxid_fixture', text: body,
+      baseline: [], startedAt: Date.now(), state: 'confirmed', confirmedAt: Date.now(), response });
+    return response;
+  };
+  const first = await adapter.sendVoice('private', '123', text, deliveryId, null);
+  assert.equal(first.media_type, 'text-fallback');
+  assert.equal(first.voiceFallback, 'voice_reply_too_long');
+  assert.equal(store.get(operation).state, 'confirmed');
+  assert.equal(store.get(operation).voiceDigest, undefined);
+  const replay = await adapter.sendVoice('private', '123', text, deliveryId, null);
+  assert.equal(replay.media_type, 'text-fallback');
+  assert.equal(replay.reused, true);
+  assert.equal(textCalls, 2);
+  assert.equal(textSubmissions, 1, 'replay must not duplicate the text fallback');
+});
 test('disabling voice during TTS prevents a late native send and falls back to text', async t => {
   const root = tempRoot(t);
   const outgoing = path.join(root, 'state', 'voice', 'outgoing');
