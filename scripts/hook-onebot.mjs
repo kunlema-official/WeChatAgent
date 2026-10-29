@@ -344,8 +344,8 @@ export class HookOneBot {
     const key=`${kind}:${target}`;
     let ownsVoiceLock=false;
     const detachRejectedVoiceAttempt=()=>{
-      if(!deliveryId||typeof this.textDeliveries?.key!=='function'||typeof this.textDeliveries?.get!=='function')return null;
-      const voiceOperation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\\0'+text);
+      if(!deliveryId||typeof this.textDeliveries?.key!=='function'||typeof this.textDeliveries?.get!=='function'||typeof this.textDeliveries?.remove!=='function')return null;
+      const voiceOperation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\0'+text);
       const textOperation=this.textDeliveries.key(kind,target,deliveryId,text);
       if(voiceOperation!==textOperation)return null;
       const attempt=this.textDeliveries.get(voiceOperation);
