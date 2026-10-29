@@ -143,7 +143,7 @@ test('the production social bridge wires the verified per-chat voice policy into
   assert.match(engine, /Object\.assign\(this, \{ buffer, decide, send, sendVoice,/);
   assert.match(engine, /voiceEnabledFor=\(\)=>false/);
   assert.match(engine, /voiceEnabledFor,/);
-  assert.match(engine, /allowVoiceReply,log:this\.log/);
+  assert.match(engine, /allowVoiceReply,maxVoiceChars,log:this\.log/);
   assert.match(engine, /this\.voiceEnabledFor\(key\)===true/);
 });
 
