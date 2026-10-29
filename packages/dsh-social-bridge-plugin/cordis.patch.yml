@@ -1,11 +1,15 @@
 - insert:
+    # The official optional Voice Input bundle already supplies these rows when enabled.
+    # Avoid duplicate Cordis ids while keeping WeChat voice independent of the browser-mic UI.
     - id: speech-to-text
       name: '@deepseek-ai/dsh-experimental-speech-to-text'
+      disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')"
       config:
         defaultProvider: sensevoice-local
         language: auto
     - id: speech-to-text-sensevoice
       name: '@deepseek-ai/dsh-experimental-speech-to-text-sensevoice'
+      disabled: !!js "ctx.get('profileContext')?.startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')"
       config:
         dataRoot: !!js dshHomePath('speech-to-text', 'sensevoice')
     - id: dsh-voice-plugin
