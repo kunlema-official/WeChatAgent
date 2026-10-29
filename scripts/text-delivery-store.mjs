@@ -23,6 +23,12 @@ export class TextDeliveryStore {
       !validRejection(item.rejection)||!validRejection(item.firstRejection))throw Error('TEXT_DELIVERY_STATE_INVALID');
     return item;
   }
+  remove(key){
+    if(!/^[a-f0-9]{64}$/.test(key))throw Error('TEXT_DELIVERY_STATE_INVALID');
+    const file=path.join(this.directory,key+'.json');
+    try{fs.unlinkSync(file);return true;}
+    catch(error){if(error?.code==='ENOENT')return false;throw error;}
+  }
   put(item){
     if(!/^[a-f0-9]{64}$/.test(item.key))throw Error('TEXT_DELIVERY_STATE_INVALID');
     fs.mkdirSync(this.directory,{recursive:true});
