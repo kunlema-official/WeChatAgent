@@ -343,6 +343,17 @@ export class HookOneBot {
     const conversationKey='wechat:'+kind+':'+target;
     const key=`${kind}:${target}`;
     let ownsVoiceLock=false;
+    const detachRejectedVoiceAttempt=()=>{
+      if(!deliveryId||typeof this.textDeliveries?.key!=='function'||typeof this.textDeliveries?.get!=='function')return null;
+      const voiceOperation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\\0'+text);
+      const textOperation=this.textDeliveries.key(kind,target,deliveryId,text);
+      if(voiceOperation!==textOperation)return null;
+      const attempt=this.textDeliveries.get(voiceOperation);
+      if(attempt?.state!=='rejected'||!attempt.voiceDigest||
+        !['NATIVE_SEND_REJECTED','NATIVE_VOICE_SEND_REJECTED'].includes(attempt.rejection?.code))return null;
+      this.textDeliveries.delete(voiceOperation);
+      return {operation:voiceOperation,attempt};
+    };
     const fallbackText=async reason=>{
       // A fallback can happen while this method owns the per-chat/global voice
       // locks. Release only our own locks before delegating to send(), otherwise
@@ -352,7 +363,16 @@ export class HookOneBot {
         this.voiceSending=false;
         ownsVoiceLock=false;
       }
-      const fallback=await this.send(kind,target,text,deliveryId,proactive);
+      // A prior definitive voice rejection shares the delivery key with text.
+      // Detach it so a safe text fallback can proceed, restoring it only if no
+      // text-delivery state was written by the failed fallback.
+      const rejectedVoice=detachRejectedVoiceAttempt();
+      let fallback;
+      try{fallback=await this.send(kind,target,text,deliveryId,proactive);}
+      catch(error){
+        if(rejectedVoice&&!this.textDeliveries.get(rejectedVoice.operation))this.textDeliveries.put(rejectedVoice.attempt);
+        throw error;
+      }
       // A confirmed retry may already refer to a voice message; never relabel it
       // as text merely because the current attempt entered a fallback branch.
       if(fallback?.media_type==='wechat-voice')return fallback;
