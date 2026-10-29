@@ -678,8 +678,30 @@ export class HookOneBot {
             if (error?.data?.attempted === true) throw error;
             const reason = error instanceof AdapterError ? error.message : 'VOICE_SEND_FAILED';
             this.status.last_error = reason;
-            const fallback = await this.send(kind,target,text,deliveryId,proactive);
-            data = {...fallback,media_type:'text-fallback',voiceFallback:reason.toLowerCase()};
+            const voiceOperation=this.textDeliveries.key(kind,target,deliveryId,'VOICE\\0'+text);
+            const textOperation=this.textDeliveries.key(kind,target,deliveryId,text);
+            let rejectedVoice=null;
+            // Keep the ordinary text sender's rejection rules strict. Only this
+            // voice-specific path may clear a known pre-submit native rejection
+            // when both modes intentionally share the same delivery ID.
+            if(reason==='NATIVE_VOICE_SEND_REJECTED'&&voiceOperation===textOperation){
+              const previous=this.textDeliveries.get(voiceOperation);
+              if(previous?.state==='rejected'&&previous.voiceDigest&&previous.rejection?.code==='NATIVE_SEND_REJECTED'){
+                rejectedVoice=previous;
+                this.textDeliveries.remove(voiceOperation);
+              }
+            }
+            let fallback;
+            try{fallback=await this.send(kind,target,text,deliveryId,proactive);}
+            catch(fallbackError){
+              // If text failed before it wrote its own attempt, restore the
+              // definitive voice rejection so retries do not repeat paid TTS.
+              if(rejectedVoice&&!this.textDeliveries.get(voiceOperation))this.textDeliveries.put(rejectedVoice);
+              throw fallbackError;
+            }
+            data = fallback?.media_type==='wechat-voice'
+              ? fallback
+              : {...fallback,media_type:'text-fallback',voiceFallback:reason.toLowerCase()};
           }
         }else{
           const text=textSegments(params.message);
