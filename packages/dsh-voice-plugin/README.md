@@ -1,6 +1,6 @@
-# DSH Voice Plugin (preview)
+# DSH Voice Service Plugin (preview)
 
-This bundle exposes one `wechatVoice` service to the WeChatAgent DSH bridge:
+This internal DSH service plugin exposes one `wechatVoice` service to the WeChatAgent bridge. It is mounted exactly once by `dsh-social-bridge-plugin`; do not register it as a second `dsh.bundle.patch` layer.
 
 - `transcribeSilk(audio, options)`: SILK v3 → canonical 16 kHz mono PCM16 WAV → DSH `speechToText` provider (default `sensevoice-local`).
 - `synthesizeSilk(text, options)`: default Xiaomi MiMo `mimo-v2.5-tts` API → WAV → 24 kHz mono PCM16 → SILK v3 for WeChat; optional `edge-tts` backend remains available by explicit configuration.

@@ -723,8 +723,16 @@ test('installer manifest includes the voice plugin, dependency setup and relocat
     'DSH must load the speech service and SenseVoice provider before the voice service, then the bridge');
   assert.equal(pluginIds.filter(id => id === 'dsh-voice-plugin').length, 1,
     'the primary WeChatAgent patch must register the voice service exactly once');
-  assert.equal(patch.split("startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')").length - 1, 2,
-    'custom speech rows must yield to the official optional bundle when that bundle is selected');
+  assert.equal(patch.split("startedBundles?.includes('@deepseek-ai/dsh-experimental-voice-input-bundle')").length - 1, 1,
+    'the fallback STT group is disabled as a unit when the official optional bundle is selected');
+  assert.ok(patch.includes('id: wechat-voice-stt-fallback'));
+  assert.ok(patch.includes('name: cordis:group'));
+  assert.ok(patch.includes('group: true'));
+  const voicePackage = JSON.parse(fs.readFileSync(new URL('../packages/dsh-voice-plugin/package.json', import.meta.url), 'utf8'));
+  assert.equal(voicePackage.dsh?.bundle?.patch, undefined,
+    'the voice service is mounted by the bridge bundle and must not contribute a second bundle layer');
+  assert.equal(fs.existsSync(new URL('../packages/dsh-voice-plugin/cordis.patch.yml', import.meta.url)), false,
+    'the internal voice package must not keep a competing self-registration patch');
   const voiceEntry = fs.readFileSync(new URL('../packages/dsh-voice-plugin/index.mjs', import.meta.url), 'utf8');
   assert.match(voiceEntry, /export const inject = \['speechToText'\]/);
   assert.match(voiceEntry, /registerVoiceService\(ctx, service\)/);

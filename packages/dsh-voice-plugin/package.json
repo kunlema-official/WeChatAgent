@@ -1,9 +1,8 @@
 {
   "name": "dsh-voice-plugin",
-  "version": "0.5.0-preview.2",
+  "version": "0.5.0-preview.3",
   "private": true,
   "type": "module",
   "main": "index.mjs",
-  "description": "WeChatAgent DSH voice services: local ASR integration and MiMo/Edge TTS-to-SILK generation",
-  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+  "description": "Internal WeChatAgent DSH voice service: local ASR integration and MiMo/Edge TTS-to-SILK generation"
 }
