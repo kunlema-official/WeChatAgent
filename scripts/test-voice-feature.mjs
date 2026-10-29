@@ -319,6 +319,37 @@ test('disabling voice during TTS prevents a late native send and falls back to t
   assert.equal(adapter.targetsSending.size, 0);
 });
 
+test('voice disabled during native identity preflight releases the voice lock before text fallback', async t => {
+  const root = tempRoot(t);
+  const adapter = Object.create(HookOneBot.prototype);
+  adapter.directory = root;
+  adapter.project = { wechat: { whitelist: { private: ['123'], groups: [] }, voice: { enabled: true, chats: {} } } };
+  adapter.hook = { maxConcurrentSends: 4 };
+  adapter.status = { native_voice_send: true };
+  adapter.targetsSending = new Set();
+  adapter.voiceSending = false;
+  adapter.reload = () => {};
+  adapter.allowed = () => true;
+  adapter.checkNative = async () => {
+    adapter.project.wechat.voice.chats[privateKey] = false;
+    return { account: 'fixture-account', selfId: 1 };
+  };
+  let textSends = 0;
+  adapter.send = async (_kind, _target, text) => {
+    assert.equal(adapter.targetsSending.has('private:123'), false,
+      'the text fallback must not run while the same chat is still voice-locked');
+    textSends++;
+    return { receipt: 'wechat-server-id', delivered: 'database-confirmed', text };
+  };
+
+  const result = await adapter.sendVoice('private', '123', '你好呀', 'f'.repeat(64), null);
+  assert.equal(result.media_type, 'text-fallback');
+  assert.equal(result.voiceFallback, 'voice_disabled');
+  assert.equal(textSends, 1);
+  assert.equal(adapter.voiceSending, false);
+  assert.equal(adapter.targetsSending.size, 0);
+});
+
 test('a definitive native voice rejection falls back to text and replay preserves the text receipt', async t => {
   const root = tempRoot(t);
   const outgoing = path.join(root, 'state', 'voice', 'outgoing');
