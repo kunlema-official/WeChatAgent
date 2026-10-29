@@ -118,5 +118,5 @@ npm run installer:build
 
 ## Voice preview based on upstream 0.4.1
 
-This repository carries the DSH voice extension on top of upstream 0.4.1 plugin improvements. The cloud-built WeChatAgent-Voice-Update-0.5.0-preview.3-x64.exe is an update package for an existing workspace; it does not bundle the WeChat or DSH desktop applications. Incoming voice recognition still requires DSH speechToText with sensevoice-local; MiMo speech synthesis requires a valid MIMO_API_KEY.
+This repository carries the DSH voice extension on top of upstream 0.4.1 plugin improvements. The cloud-built WeChatAgent-Voice-Update-0.5.0-preview.3-x64.exe is an update package for an existing workspace; it does not bundle the WeChat or DSH desktop applications. [Download the Windows x64 update artifact from GitHub Actions](https://github.com/kunlema-official/WeChatAgent/actions/workflows/windows-voice-installer.yml?query=branch%3Afix%2Fvoice-ui-20261026). Incoming voice recognition requires DSH speechToText with sensevoice-local; MiMo speech synthesis requires a valid MIMO_API_KEY. CI has not sent a real voice bubble through a live WeChat process, so test a single private chat before enabling voice elsewhere.
 
