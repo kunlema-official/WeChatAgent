@@ -297,7 +297,11 @@ test('disabling voice during TTS prevents a late native send and falls back to t
   adapter.resolveTarget = async () => 'wxid_fixture';
   adapter.textDeliveries = new TextDeliveryStore(path.join(root, 'state', 'text-deliveries'));
   let textCalls = 0, nativeCalls = 0;
-  adapter.send = async (_kind, _target, text) => { textCalls++; return { delivered: 'database-confirmed', text }; };
+  adapter.send = async (_kind, _target, text) => {
+    assert.equal(adapter.targetsSending.has('private:123'), false,
+      'voice fallback must release its per-chat lock before calling the ordinary text sender');
+    textCalls++; return { delivered: 'database-confirmed', text };
+  };
   adapter.dshRequest = async () => {
     adapter.project.wechat.voice.chats['wechat:private:123'] = false;
     return { path: file, bytes: audio.length, durationMs: 2500 };
@@ -313,6 +317,131 @@ test('disabling voice during TTS prevents a late native send and falls back to t
   assert.equal(fs.existsSync(file), false, 'generated SILK is cleaned up after the policy changes');
   assert.equal(adapter.voiceSending, false);
   assert.equal(adapter.targetsSending.size, 0);
+});
+
+test('a definitive native voice rejection falls back to text and replay preserves the text receipt', async t => {
+  const root = tempRoot(t);
+  const outgoing = path.join(root, 'state', 'voice', 'outgoing');
+  fs.mkdirSync(outgoing, { recursive: true });
+  const file = path.join(outgoing, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.silk');
+  const audio = Buffer.concat([Buffer.from('#!SILK_V3', 'ascii'), Buffer.alloc(64, 9)]);
+  fs.writeFileSync(file, audio);
+  const clientDirectory = path.join(root, 'client');
+  fs.mkdirSync(clientDirectory, { recursive: true });
+  const adapter = Object.create(HookOneBot.prototype);
+  adapter.directory = root;
+  adapter.project = { wechat: { whitelist: { private: ['123'], groups: [] }, voice: { enabled: true, chats: {} } } };
+  adapter.hook = { maxConcurrentSends: 4, receiptTimeoutMs: 1000, wechatExecutable: path.join(clientDirectory, 'Weixin.exe') };
+  adapter.status = { native_voice_send: true, confirmed_sends: 0, last_error: '', failed_sends: 0 };
+  adapter.targetsSending = new Set();
+  adapter.voiceSending = false;
+  adapter.stopped = false;
+  adapter.activeActions = 0;
+  adapter.pollMs = 1;
+  adapter.receiptOverride = 1000;
+  adapter.textDeliveries = new TextDeliveryStore(path.join(root, 'state', 'text-deliveries'));
+  adapter.reload = () => {};
+  adapter.allowed = () => true;
+  adapter.checkNative = async () => ({ account: 'fixture-account', selfId: 1 });
+  adapter.resolveTarget = async () => 'wxid_fixture';
+  let textSubmitted = false, voiceSubmissions = 0, textSubmissions = 0, synthCalls = 0;
+  adapter.dshRequest = async route => {
+    assert.equal(route, '/voice/synthesize');
+    synthCalls++;
+    return { path: file, bytes: audio.length, durationMs: 2500 };
+  };
+  adapter.messages = async () => textSubmitted ? [{
+    localId: 101, createTime: Math.floor(Date.now() / 1000), isSend: true,
+    localType: 1, serverId: '202', fullText: '你好呀',
+  }] : [];
+  adapter.native = async (route, body) => {
+    if (route === '/Debug/VoiceSend') return { enabled: body.on, forceOn: body.on };
+    if (route === '/SendVoiceMsg') { voiceSubmissions++; return { ret: 1, retmsg: 'native voice rejected' }; }
+    if (route === '/SendTextMsg') { textSubmissions++; textSubmitted = true; return { ret: 0 }; }
+    throw new Error('Unexpected native route: ' + route);
+  };
+  const request = {
+    action: 'send_private_msg',
+    params: {
+      user_id: 123,
+      message: [{ type: 'wechat_voice', data: { text: '你好呀' } }],
+      wechatagent_delivery_id: 'd'.repeat(64),
+    },
+  };
+
+  const first = await adapter.action(request);
+  assert.equal(first.status, 'ok');
+  assert.equal(first.data.media_type, 'text-fallback');
+  assert.equal(first.data.delivered, 'database-confirmed');
+  assert.equal(voiceSubmissions, 1);
+  assert.equal(textSubmissions, 1);
+  assert.equal(synthCalls, 1);
+
+  const replay = await adapter.action(request);
+  assert.equal(replay.status, 'ok');
+  assert.equal(replay.data.media_type, 'text-fallback',
+    'a confirmed text fallback must not be mislabeled as a voice message');
+  assert.equal(replay.data.reused, true);
+  assert.equal(voiceSubmissions, 1, 'replay must not submit a second voice');
+  assert.equal(textSubmissions, 1, 'replay must not duplicate the text fallback');
+  assert.equal(synthCalls, 1, 'replay must not repeat paid TTS');
+});
+
+test('voice policy is rechecked after opening the native gate and before native submission', async t => {
+  const root = tempRoot(t);
+  const outgoing = path.join(root, 'state', 'voice', 'outgoing');
+  fs.mkdirSync(outgoing, { recursive: true });
+  const file = path.join(outgoing, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.silk');
+  const audio = Buffer.concat([Buffer.from('#!SILK_V3', 'ascii'), Buffer.alloc(64, 9)]);
+  fs.writeFileSync(file, audio);
+  const clientDirectory = path.join(root, 'client');
+  fs.mkdirSync(clientDirectory, { recursive: true });
+  const adapter = Object.create(HookOneBot.prototype);
+  adapter.directory = root;
+  adapter.project = { wechat: { whitelist: { private: ['123'], groups: [] }, voice: { enabled: true, chats: {} } } };
+  adapter.hook = { maxConcurrentSends: 4, receiptTimeoutMs: 1000, wechatExecutable: path.join(clientDirectory, 'Weixin.exe') };
+  adapter.status = { native_voice_send: true, confirmed_sends: 0, last_error: '' };
+  adapter.targetsSending = new Set();
+  adapter.voiceSending = false;
+  adapter.stopped = false;
+  adapter.pollMs = 1;
+  adapter.receiptOverride = 1000;
+  adapter.textDeliveries = new TextDeliveryStore(path.join(root, 'state', 'text-deliveries'));
+  adapter.reload = () => {};
+  adapter.allowed = () => true;
+  adapter.checkNative = async () => ({ account: 'fixture-account', selfId: 1 });
+  adapter.resolveTarget = async () => 'wxid_fixture';
+  adapter.dshRequest = async () => ({ path: file, bytes: audio.length, durationMs: 2500 });
+  adapter.messages = async () => [];
+  let gateClosed = false, voiceSubmissions = 0, textSends = 0;
+  adapter.native = async (route, body) => {
+    if (route === '/Debug/VoiceSend' && body.on === true) {
+      adapter.project.wechat.voice.chats[privateKey] = false;
+      return { enabled: true, forceOn: true };
+    }
+    if (route === '/Debug/VoiceSend' && body.on === false) {
+      gateClosed = true;
+      return { enabled: false, forceOn: false };
+    }
+    if (route === '/SendVoiceMsg') { voiceSubmissions++; return { ret: 0 }; }
+    throw new Error('Unexpected native route: ' + route);
+  };
+  adapter.send = async (_kind, _target, text) => {
+    assert.equal(adapter.targetsSending.has('private:123'), false,
+      'text fallback must not inherit the voice send lock');
+    textSends++;
+    return { receipt: 'wechat-server-id', delivered: 'database-confirmed', text };
+  };
+
+  const result = await adapter.sendVoice('private', '123', '你好呀', 'e'.repeat(64), null);
+  assert.equal(result.media_type, 'text-fallback');
+  assert.equal(result.voiceFallback, 'voice_disabled_before_native_send');
+  assert.equal(gateClosed, true, 'the one-shot native voice gate must close before fallback');
+  assert.equal(voiceSubmissions, 0, 'no voice submission is allowed after the chat disables voice');
+  assert.equal(textSends, 1);
+  assert.equal(adapter.voiceSending, false);
+  assert.equal(adapter.targetsSending.size, 0);
+  assert.equal(fs.existsSync(file), false, 'the generated SILK artifact is cleaned up');
 });
 
 test('a compatible native Hook sends generated SILK once and confirms a type-34 receipt', async t => {
