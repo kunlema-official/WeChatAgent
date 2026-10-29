@@ -6,7 +6,7 @@ import { stickerPolicy, cleanStickerLabel } from '../components/qq-bridge/src/co
 import {FileDeliveryWorker} from './file-delivery-worker.mjs';
 import { TextDeliveryStore } from './text-delivery-store.mjs';
 import {hookAccountProblem} from './wechat-account-check.mjs';
-import { voiceEnabledFor } from '../packages/dsh-voice-plugin/voice-policy.mjs';
+import { voiceEnabledFor, voiceReplyLimitFor } from '../packages/dsh-voice-plugin/voice-policy.mjs';
 import {proactivePolicy,withinProactiveWindow,conversationSnapshot,declinedProactive} from '../components/qq-bridge/src/core/proactive-policy.js';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -359,6 +359,7 @@ export class HookOneBot {
       return {...fallback,media_type:'text-fallback',voiceFallback:reason};
     };
     if (!voiceEnabledFor(this.project.wechat,conversationKey)) return await fallbackText('voice_disabled');
+    if ([...text].length > voiceReplyLimitFor(this.project.wechat)) return await fallbackText('voice_reply_too_long');
     const identity=await this.checkNative();
     if (!this.status.native_voice_send) {
       this.status.voice_output='text-fallback-native-sender-missing';
@@ -408,6 +409,7 @@ export class HookOneBot {
         this.reload();
         if(!this.allowed(kind,target))fail('CONVERSATION_NOT_ALLOWED');
         if(!voiceEnabledFor(this.project.wechat,conversationKey))return await fallbackText('voice_disabled_during_synthesis');
+        if([...text].length>voiceReplyLimitFor(this.project.wechat))return await fallbackText('voice_reply_too_long_during_synthesis');
         const voiceDigest=crypto.createHash('sha256').update(fs.readFileSync(artifact.path)).digest('hex');
         const currentRows=await this.messages(wxid);
         if(proactive)this.assertProactive(kind,target,currentRows,proactive,identity,wxid);
@@ -424,6 +426,10 @@ export class HookOneBot {
         if(!voiceEnabledFor(this.project.wechat,conversationKey)){
           await closeVoiceGate();closeVoiceGate=async()=>{};
           return await fallbackText('voice_disabled_before_native_send');
+        }
+        if([...text].length>voiceReplyLimitFor(this.project.wechat)){
+          await closeVoiceGate();closeVoiceGate=async()=>{};
+          return await fallbackText('voice_reply_too_long_before_native_send');
         }
         attempt={version:1,key:operation,deliveryId:deliveryId??'',account:identity.account,wxid,text,baseline,voiceDigest,checkedVoiceIds:[],
           startedAt:Date.now(),state:'dispatching',...(rejectedBusy?{rejection:rejectedBusy.rejection,firstRejection:rejectedBusy.firstRejection??rejectedBusy.rejection}:{})};
